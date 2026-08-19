@@ -10,7 +10,7 @@ workflow — this README is the operational companion.
 
 ## Live
 
-This project is publicly hosted at **(URL pending first Render deploy)**.
+This project is publicly hosted at **[x-copy-trade-tool-demo.onrender.com](https://x-copy-trade-tool-demo.onrender.com)**.
 Anyone can browse the dashboard read-only — Posts, Proposals, Trades,
 Metrics, Accounts, and a Roadmap tab — with no signup. It runs against a
 real **OANDA practice** account (never real money, never the `live`
