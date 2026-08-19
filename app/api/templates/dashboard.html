@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>X Copy-Trade Tool (Demo)</title>
+<title>X Copy-Trade Tool</title>
 <style>
   :root {
     --bg: #0b0f17;
@@ -552,6 +552,22 @@ function escapeHtml(s) {
   return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
+// X's API returns tweet text with some characters already HTML-entity-encoded
+// (e.g. "&" arrives as the literal string "&amp;") -- escapeHtml() then
+// re-escapes that into "&amp;amp;", and the browser only decodes one layer on
+// render, so raw post text needs this decoded first or "&amp;" shows up
+// literally on screen. Only decodes entities X is actually known to leak, in
+// a fixed order (named entities before the bare "&" they might contain) --
+// deliberately not a generic HTML-entity decoder over untrusted text.
+function decodeXTextEntities(s) {
+  return String(s ?? '')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, '&');
+}
+
 function pill(ok, text, warn) {
   const cls = warn ? 'warn' : (ok ? 'ok' : 'bad');
   return `<span class="pill ${cls}"><span class="dot"></span>${escapeHtml(text)}</span>`;
@@ -653,8 +669,8 @@ async function refreshProposals() {
         stop: ${p.signal?.stop_loss ?? 'n/a'} &middot;
         tp: ${escapeHtml(p.signal?.take_profit_json ?? '[]')}
       </div>
-      <div class="evidence">${escapeHtml(JSON.parse(p.signal?.evidence_json || '[]').join(' / '))}</div>
-      <div class="muted">source post: &ldquo;${escapeHtml(p.post ? p.post.text : '')}&rdquo;</div>
+      <div class="evidence">${escapeHtml(decodeXTextEntities(JSON.parse(p.signal?.evidence_json || '[]').join(' / ')))}</div>
+      <div class="muted">source post: &ldquo;${escapeHtml(decodeXTextEntities(p.post ? p.post.text : ''))}&rdquo;</div>
       <div style="margin-top:10px; display:flex; gap:8px">
         <button class="primary small" ${operatorGateAttr()} onclick="approve('${p.proposal.proposal_id}')">Approve</button>
         <button class="danger small" ${operatorGateAttr()} onclick="reject('${p.proposal.proposal_id}')">Reject</button>
@@ -692,7 +708,7 @@ async function refreshPosts() {
         <span class="card-title">@${escapeHtml(item.post.author)}</span>
         <span class="muted">${escapeHtml(item.post.posted_at)}</span>
       </div>
-      <div style="margin-top:4px">${escapeHtml(item.post.text)}</div>
+      <div style="margin-top:4px">${escapeHtml(decodeXTextEntities(item.post.text))}</div>
       <div class="muted" style="margin-top:6px">category: ${escapeHtml(item.classification ? item.classification.category : 'pending')}</div>
       ${item.signal ? `<div class="muted">signal: ${escapeHtml(item.signal.signal_type)} ${escapeHtml(item.signal.instrument ?? '')} conf=${item.signal.confidence} review=${item.signal.requires_human_review}</div>` : ''}
     </div>`).join('') : `<div class="empty-state">${items.length ? 'Feed cleared — new posts will appear here.' : 'No posts yet.'}</div>`;
