@@ -1,0 +1,102 @@
+# Conservative starting values -- NOT recommendations or guarantees. See
+# DESIGN.md Section 5 for the rationale behind each. Revisit after you have
+# real observe-mode/approval-mode results to look at.
+#
+# Sized around a $10k account, a source account trusted at high confidence,
+# and the expectation of following high-volume/scalper-style accounts (tight
+# stops, frequent posts) -- see chat log 2026-07-15 for the full reasoning.
+# risk_per_trade_percent is the dollar risk budget *if the stop is hit*; it
+# is deliberately independent of max_position_margin_percent below, which
+# caps how much of the account a single position's margin can consume
+# regardless of how tight its stop is (a tight stop + risk-based sizing
+# alone can otherwise produce a hugely leveraged position for a "small"
+# risk% -- this is exactly what happened at risk_per_trade_percent=5 with a
+# 20-pip EUR_USD fallback stop: ~71% of equity in margin on one trade).
+
+risk_per_trade_percent: 0.5
+# Hard ceiling on margin used by a single position, independent of the risk
+# math above. If a tight stop would otherwise produce a position needing
+# more margin than this, position_sizing.py clamps units down (reducing
+# that trade's realized risk below risk_per_trade_percent) rather than
+# rejecting outright -- see PositionSizeResult.margin_capped.
+max_position_margin_percent: 8
+max_daily_loss_percent: 3
+max_weekly_loss_percent: 6.5
+max_consecutive_losses: 3
+max_open_positions: 5
+# max_total/instrument/source_account_exposure_percent are expressed in the
+# same unit as risk_per_trade_percent (summed risk %, not margin %). Sized
+# as max_open_positions (5) * risk_per_trade_percent (0.5) = 2.5, plus a
+# small buffer -- these must be revisited together if either of those two
+# numbers changes, or they stop being a real constraint (as happened
+# before: they were set to 30 against a comment that itself said 10).
+# Raised from max_open_positions=2 on 2026-07-20: the global cap of 2 was
+# fully occupied by two slow-moving EUR_USD positions for days, silently
+# blocking every other signal (gold included) regardless of quality.
+max_total_exposure_percent: 2.7
+max_exposure_per_instrument_percent: 2.7
+max_exposure_per_source_account_percent: 2.7
+max_trades_per_hour: 3
+max_trades_per_day: 8
+cooldown_after_loss_minutes: 30
+cooldown_after_api_failures_minutes: 30
+api_failure_circuit_breaker_count: 5
+api_failure_circuit_breaker_window_minutes: 10
+minimum_reward_to_risk: 1.5
+require_stop_loss: true
+max_spread_pips:
+  EUR_USD: 1.5
+  GBP_USD: 2.0
+  USD_JPY: 1.8
+  AUD_USD: 2.0
+  US30_USD: 3.0
+  SPX500_USD: 1.0
+  NAS100_USD: 2.0
+  # Was 0.5 -- unreachable given XAU_USD's live top-of-book spread runs
+  # ~75 pips at this account's pip_size (0.01), so gold had never once
+  # passed this check. Set to 100 for headroom above the observed spread
+  # while still rejecting genuinely abnormal/illiquid widening.
+  XAU_USD: 100
+  WTICO_USD: 4.0
+  BTC_USD: 30.0
+  ETH_USD: 3.0
+max_slippage_pips: 1.0
+# When a source post omits a stop loss: "human_review" (safest -- reject,
+# route to a proposal a human must supply a stop for) or "apply_risk_model"
+# (compute a protective stop from fallback_stop_distance_pips below instead
+# of rejecting). Switched on deliberately for accounts whose author never
+# states a stop/target in text (e.g. rolling/averaging position updates)
+# but whose direction and entry are otherwise clear and trusted based on
+# manual observation of the account. This does NOT weaken "no order without
+# a stop loss" -- it changes where that stop distance comes from (computed
+# here, rather than read from the post) when the post itself has none.
+missing_stop_loss_behavior: apply_risk_model
+# Fallback protective stop distance (pips) from current price, applied ONLY
+# when a new_trade signal has no stop_loss AND missing_stop_loss_behavior is
+# apply_risk_model. Starting guesses, not volatility-calibrated -- revisit
+# once you have apply_risk_model trades to look at (same caveat as every
+# other number in this file).
+fallback_stop_distance_pips:
+  EUR_USD: 20
+  GBP_USD: 25
+  USD_JPY: 20
+  AUD_USD: 20
+  US30_USD: 80
+  SPX500_USD: 15
+  NAS100_USD: 40
+  # Was 40 (=$0.40 at this account's pip_size of 0.01) -- tighter than
+  # gold's own live bid/ask spread ($0.56-0.75 observed), so every
+  # fallback-stop gold order got cancelled by OANDA on fill
+  # (STOP_LOSS_ON_FILL_LOSS) before a position could ever open. Same
+  # pip-scaling mistake as max_spread_pips.XAU_USD, fixed 2026-07-20.
+  # Raised to 4000 (=$40) for headroom above spread and real volatility.
+  XAU_USD: 4000
+  WTICO_USD: 50
+  BTC_USD: 300
+  ETH_USD: 20
+# When a new_trade signal has a stop_loss (stated or fallback-computed) but
+# no take_profit at all, the fallback target is placed at exactly this
+# multiple of the stop distance -- i.e. the minimum this system would ever
+# accept anyway (matches minimum_reward_to_risk). Only used alongside
+# apply_risk_model; a post that states its own target is never overridden.
+fallback_reward_to_risk_multiple: 1.5

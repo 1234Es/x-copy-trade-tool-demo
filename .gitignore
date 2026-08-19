@@ -1,0 +1,10 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+data/*.db
+data/*.sqlite3
+!data/copy_trader.db
+logs/
+.pytest_cache/
+.claude/

@@ -1,0 +1,14 @@
+# Per-source-account exposure cap (DESIGN.md/Phase 7: "max exposure per
+# source account"). Independent of the global max_open_positions.
+# Managed by the dashboard's Accounts tab as well as by hand -- both
+# write this same file.
+
+tracked_accounts:
+- username: waltervannelli
+  profile_url: https://x.com/waltervannelli
+  enabled: true
+  max_open_positions_from_account: 2
+- username: trynahustle
+  profile_url: https://x.com/TrynaHustle
+  enabled: true
+  max_open_positions_from_account: 2

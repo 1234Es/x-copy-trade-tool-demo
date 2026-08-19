@@ -1,0 +1,29 @@
+services:
+  - type: web
+    name: x-copy-trade-tool
+    env: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: APP_MODE
+        value: observe
+      - key: OANDA_ENVIRONMENT
+        value: practice
+      - key: DATABASE_URL
+        value: sqlite:///data/copy_trader.db
+      - key: SECURE_COOKIES
+        value: "true"
+      - key: PUBLIC_URL
+        sync: false
+      - key: OPERATOR_PASSWORD
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OANDA_API_TOKEN
+        sync: false
+      - key: OANDA_ACCOUNT_ID
+        sync: false
+      - key: X_BEARER_TOKEN
+        sync: false
+      - key: WEBHOOK_SHARED_SECRET
+        sync: false

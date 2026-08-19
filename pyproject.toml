@@ -1,0 +1,9 @@
+[project]
+name = "x-copy-trade-tool"
+version = "0.1.0"
+description = "Demo-only copy-trading tool: X post monitoring -> LLM signal interpretation -> OANDA practice execution"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]

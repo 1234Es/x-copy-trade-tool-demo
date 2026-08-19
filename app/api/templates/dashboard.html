@@ -1,0 +1,841 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>X Copy-Trade Tool (Demo)</title>
+<style>
+  :root {
+    --bg: #0b0f17;
+    --bg-elevated: #121927;
+    --bg-card: #161f30;
+    --bg-hover: #1c273b;
+    --border: #283349;
+    --text: #e7eaf1;
+    --text-muted: #8c96ab;
+    --accent: #3b82f6;
+    --accent-hover: #2563eb;
+    --accent-bg: #10233f;
+    --success: #34d399;
+    --success-bg: #0d2a20;
+    --danger: #f87171;
+    --danger-bg: #34131a;
+    --warning: #fbbf24;
+    --warning-bg: #332309;
+    --radius: 10px;
+    --radius-sm: 6px;
+    --space-1: 4px;
+    --space-2: 8px;
+    --space-3: 12px;
+    --space-4: 16px;
+    --space-5: 24px;
+    --space-6: 32px;
+    --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+    --font-mono: "SF Mono", Consolas, "Liberation Mono", monospace;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    font-family: var(--font);
+    background: var(--bg);
+    color: var(--text);
+    margin: 0;
+    line-height: 1.5;
+  }
+
+  a { color: var(--accent); }
+
+  button, input, textarea {
+    font-family: inherit;
+    font-size: 0.9rem;
+  }
+
+  button:focus-visible, input:focus-visible, textarea:focus-visible, [role="tab"]:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  /* ---- header / top status bar ---- */
+
+  header {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background: var(--bg-elevated);
+    border-bottom: 1px solid var(--border);
+    padding: var(--space-3) var(--space-5);
+  }
+
+  .header-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    flex-wrap: wrap;
+  }
+
+  h1 {
+    font-size: 1.15rem;
+    font-weight: 600;
+    margin: 0;
+    margin-right: auto;
+  }
+
+  .mode-badge {
+    background: var(--accent-bg);
+    color: var(--accent);
+    border: 1px solid var(--accent);
+    padding: 3px 10px;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+
+  .status-strip {
+    display: flex;
+    gap: var(--space-2);
+    flex-wrap: wrap;
+    margin-top: var(--space-3);
+    align-items: center;
+  }
+
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    font-size: 0.78rem;
+    font-weight: 500;
+    border: 1px solid transparent;
+  }
+  .pill.ok { background: var(--success-bg); color: var(--success); border-color: color-mix(in srgb, var(--success) 35%, transparent); }
+  .pill.bad { background: var(--danger-bg); color: var(--danger); border-color: color-mix(in srgb, var(--danger) 35%, transparent); }
+  .pill.warn { background: var(--warning-bg); color: var(--warning); border-color: color-mix(in srgb, var(--warning) 35%, transparent); }
+  .pill .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex: none; }
+
+  .status-strip .spacer { flex: 1; }
+
+  .equity {
+    font-family: var(--font-mono);
+    font-size: 0.9rem;
+    color: var(--text);
+  }
+  .equity .label { color: var(--text-muted); font-family: var(--font); margin-right: 6px; }
+
+  /* ---- buttons ---- */
+
+  button {
+    background: var(--bg-card);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 6px 14px;
+    cursor: pointer;
+    min-height: 32px;
+  }
+  button:hover { background: var(--bg-hover); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: white; }
+  button.primary:hover { background: var(--accent-hover); }
+  button.danger { background: var(--danger-bg); border-color: var(--danger); color: var(--danger); }
+  button.danger:hover { background: color-mix(in srgb, var(--danger-bg) 70%, black); }
+  button.small { padding: 4px 10px; min-height: 28px; font-size: 0.8rem; }
+
+  /* ---- layout / tabs ---- */
+
+  main {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: var(--space-5);
+  }
+
+  [role="tablist"] {
+    display: flex;
+    gap: var(--space-1);
+    border-bottom: 1px solid var(--border);
+    margin-bottom: var(--space-5);
+    overflow-x: auto;
+  }
+
+  [role="tab"] {
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    border-radius: 0;
+    color: var(--text-muted);
+    padding: var(--space-2) var(--space-4);
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  [role="tab"]:hover { background: var(--bg-elevated); color: var(--text); }
+  [role="tab"][aria-selected="true"] { color: var(--text); border-bottom-color: var(--accent); }
+
+  .tab-count {
+    display: inline-block;
+    background: var(--accent);
+    color: white;
+    border-radius: 999px;
+    font-size: 0.7rem;
+    padding: 1px 7px;
+    margin-left: 6px;
+  }
+
+  [role="tabpanel"][hidden] { display: none; }
+
+  /* ---- cards / lists ---- */
+
+  .card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: var(--space-4);
+    margin-bottom: var(--space-3);
+  }
+
+  .card-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: var(--space-2);
+    flex-wrap: wrap;
+  }
+
+  .card-title { font-weight: 600; }
+  .muted { color: var(--text-muted); font-size: 0.85rem; }
+  .evidence { font-style: italic; color: #93c5fd; font-size: 0.85rem; }
+  .empty-state { color: var(--text-muted); padding: var(--space-4); text-align: center; }
+
+  .badge {
+    display: inline-block;
+    padding: 2px 9px;
+    border-radius: 999px;
+    font-size: 0.72rem;
+    font-weight: 600;
+  }
+  .badge.open { background: var(--accent-bg); color: var(--accent); }
+  .badge.win { background: var(--success-bg); color: var(--success); }
+  .badge.loss { background: var(--danger-bg); color: var(--danger); }
+  .badge.fallback { background: var(--warning-bg); color: var(--warning); }
+  .badge.source { background: var(--border); color: var(--text-muted); }
+
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--border); font-size: 0.85rem; }
+  th { color: var(--text-muted); font-weight: 600; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.03em; }
+  td.num { font-family: var(--font-mono); }
+  tr:last-child td { border-bottom: none; }
+  .table-wrap { overflow-x: auto; }
+
+  /* ---- forms ---- */
+
+  label { display: block; font-size: 0.85rem; color: var(--text-muted); margin-bottom: 4px; }
+  input[type="text"], textarea {
+    width: 100%;
+    background: var(--bg-elevated);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 8px 10px;
+    margin-bottom: var(--space-3);
+  }
+
+  .field { margin-bottom: var(--space-3); }
+
+  /* ---- toggle switch ---- */
+
+  .toggle-row {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-3);
+    justify-content: space-between;
+  }
+  .toggle-copy { max-width: 60ch; }
+  .account-controls { display: flex; align-items: center; gap: var(--space-3); }
+  .switch {
+    position: relative;
+    display: inline-block;
+    width: 42px;
+    height: 24px;
+    flex: none;
+  }
+  .switch input { opacity: 0; width: 0; height: 0; }
+  .switch .track {
+    position: absolute; inset: 0; cursor: pointer;
+    background: var(--border); border-radius: 999px; transition: background 0.15s ease;
+  }
+  .switch .track::before {
+    content: ""; position: absolute; height: 18px; width: 18px; left: 3px; top: 3px;
+    background: white; border-radius: 50%; transition: transform 0.15s ease;
+  }
+  .switch input:checked + .track { background: var(--accent); }
+  .switch input:checked + .track::before { transform: translateX(18px); }
+  .switch input:focus-visible + .track { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .switch .track, .switch .track::before { transition: none; }
+  }
+
+  .section-heading {
+    font-size: 0.95rem;
+    font-weight: 600;
+    margin: 0 0 var(--space-3);
+  }
+
+  /* ---- metrics ---- */
+
+  .period-selector {
+    display: inline-flex;
+    gap: 2px;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 3px;
+    margin-bottom: var(--space-4);
+  }
+  .period-btn {
+    background: transparent;
+    border: none;
+    border-radius: 5px;
+    color: var(--text-muted);
+    min-height: 28px;
+    padding: 4px 12px;
+  }
+  .period-btn:hover { background: var(--bg-hover); color: var(--text); }
+  .period-btn[aria-pressed="true"] { background: var(--accent); color: white; }
+
+  .stat-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: var(--space-3);
+  }
+  .stat-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: var(--space-4);
+  }
+  .stat-label {
+    color: var(--text-muted);
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    margin-bottom: 6px;
+  }
+  .stat-value {
+    font-family: var(--font-mono);
+    font-size: 1.6rem;
+    font-weight: 600;
+  }
+  .stat-value.positive { color: var(--success); }
+  .stat-value.negative { color: var(--danger); }
+  .stat-sub {
+    color: var(--text-muted);
+    font-size: 0.78rem;
+    margin-top: 4px;
+  }
+
+  @media (max-width: 640px) {
+    main { padding: var(--space-4); }
+    header { padding: var(--space-3) var(--space-4); }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="header-row">
+    <h1>X Copy-Trade Tool</h1>
+    <span class="mode-badge" id="mode-badge">mode: {{ app_mode }}</span>
+    <button class="danger small" data-operator-gated {% if operator_login_enabled and not operator_authenticated %}disabled title="Log in as operator to use this"{% endif %} onclick="triggerKillSwitch()">Kill switch</button>
+    <button class="small" data-operator-gated {% if operator_login_enabled and not operator_authenticated %}disabled title="Log in as operator to use this"{% endif %} onclick="clearKillSwitch()">Clear kill switch</button>
+    <button class="small" data-operator-gated {% if operator_login_enabled and not operator_authenticated %}disabled title="Log in as operator to use this"{% endif %} onclick="clearCircuitBreaker()">Clear circuit breaker</button>
+    {% if operator_login_enabled %}
+    <div id="operator-auth" style="margin-left:auto; display:flex; align-items:center; gap:var(--space-2)">
+      <div id="login-form" style="display:{{ 'none' if operator_authenticated else 'flex' }}; gap:var(--space-2)">
+        <input type="password" id="operator-password" placeholder="Operator password" style="width:11em">
+        <button class="primary small" onclick="loginOperator()">Log in</button>
+        <span class="muted" id="login-error"></span>
+      </div>
+      <button class="small" id="logout-btn" style="display:{{ 'inline-flex' if operator_authenticated else 'none' }}" onclick="logoutOperator()">Log out</button>
+    </div>
+    {% endif %}
+  </div>
+  <div class="status-strip" id="status-strip">
+    <span class="muted">loading status&hellip;</span>
+  </div>
+</header>
+
+<main>
+  <div role="tablist" aria-label="Dashboard sections">
+    <button role="tab" id="tab-posts" aria-controls="panel-posts" aria-selected="true">Posts</button>
+    <button role="tab" id="tab-proposals" aria-controls="panel-proposals" aria-selected="false">Proposals<span class="tab-count" id="proposals-count" hidden>0</span></button>
+    <button role="tab" id="tab-trades" aria-controls="panel-trades" aria-selected="false">Trades</button>
+    <button role="tab" id="tab-metrics" aria-controls="panel-metrics" aria-selected="false">Metrics</button>
+    <button role="tab" id="tab-accounts" aria-controls="panel-accounts" aria-selected="false">Accounts</button>
+    <button role="tab" id="tab-settings" aria-controls="panel-settings" aria-selected="false">Submit &amp; Settings</button>
+    <button role="tab" id="tab-roadmap" aria-controls="panel-roadmap" aria-selected="false">Roadmap</button>
+  </div>
+
+  <div role="tabpanel" id="panel-posts" aria-labelledby="tab-posts">
+    <div class="header-row" style="margin-bottom: var(--space-3); justify-content: space-between">
+      <h2 class="section-heading" style="margin: 0">Recent posts</h2>
+      <button class="small" onclick="clearPostsFeed()">Clear feed</button>
+    </div>
+    <div id="posts-card"></div>
+  </div>
+
+  <div role="tabpanel" id="panel-proposals" aria-labelledby="tab-proposals" hidden>
+    <div id="proposals-card"></div>
+  </div>
+
+  <div role="tabpanel" id="panel-trades" aria-labelledby="tab-trades" hidden>
+    <div id="trades-card"></div>
+  </div>
+
+  <div role="tabpanel" id="panel-metrics" aria-labelledby="tab-metrics" hidden>
+    <div class="period-selector" id="period-selector">
+      <button class="period-btn" data-period="today">Today</button>
+      <button class="period-btn" data-period="week">This Week</button>
+      <button class="period-btn" data-period="month">This Month</button>
+      <button class="period-btn" data-period="all">All Time</button>
+    </div>
+    <div id="metrics-card"></div>
+  </div>
+
+  <div role="tabpanel" id="panel-accounts" aria-labelledby="tab-accounts" hidden>
+    <h2 class="section-heading">Add an account</h2>
+    <div class="card">
+      <div class="field">
+        <label for="a-handle">X handle or profile URL</label>
+        <input type="text" id="a-handle" data-operator-gated placeholder="e.g. https://x.com/username or username" {% if operator_login_enabled and not operator_authenticated %}disabled{% endif %}>
+      </div>
+      <button class="primary" data-operator-gated {% if operator_login_enabled and not operator_authenticated %}disabled title="Log in as operator to use this"{% endif %} onclick="addAccount()">Add account</button>
+      <div class="muted" id="add-account-result" style="margin-top: var(--space-2)"></div>
+    </div>
+
+    <h2 class="section-heading">Tracked accounts</h2>
+    <div id="accounts-card"></div>
+  </div>
+
+  <div role="tabpanel" id="panel-settings" aria-labelledby="tab-settings" hidden>
+    <h2 class="section-heading">Auto-approve</h2>
+    <div class="card">
+      <div class="toggle-row">
+        <div class="toggle-copy">
+          <div class="card-title">Auto-approve trades</div>
+          <div class="muted">
+            When on, any signal that already passed every validation and risk check executes
+            immediately with no click needed &mdash; including signals that would otherwise need
+            review (missing stop/target, low confidence). It never affects <code>observe</code>
+            mode, which still never submits an order. All validation, risk, and circuit-breaker
+            checks still apply unconditionally either way.
+          </div>
+        </div>
+        <label class="switch">
+          <input type="checkbox" id="auto-approve-toggle" data-operator-gated {% if operator_login_enabled and not operator_authenticated %}disabled{% endif %} onchange="toggleAutoApprove(this.checked)">
+          <span class="track"></span>
+        </label>
+      </div>
+    </div>
+
+    <h2 class="section-heading">Submit a post manually</h2>
+    <div class="card">
+      <div class="field">
+        <label for="m-author">Author</label>
+        <input type="text" id="m-author" placeholder="e.g. waltervannelli">
+      </div>
+      <div class="field">
+        <label for="m-text">Post text</label>
+        <textarea id="m-text" rows="3" placeholder="post text"></textarea>
+      </div>
+      <div class="field">
+        <label for="m-reply">Reply-to post ID (optional)</label>
+        <input type="text" id="m-reply" placeholder="optional">
+      </div>
+      <button class="primary" data-operator-gated {% if operator_login_enabled and not operator_authenticated %}disabled title="Log in as operator to use this"{% endif %} onclick="submitManual()">Submit</button>
+      <div class="muted" id="manual-result" style="margin-top: var(--space-2)"></div>
+    </div>
+  </div>
+
+  <div role="tabpanel" id="panel-roadmap" aria-labelledby="tab-roadmap" hidden>
+    <h2 class="section-heading">Shipped</h2>
+    <div class="card">
+      <ul style="margin:0; padding-left:1.2em; line-height:1.7">
+        <li>Manual/JSON, webhook, and full X API v2 input adapters, plus a companion browser extension for one-click capture from x.com</li>
+        <li>Rule-based pre-filter + OpenAI structured-output post classification</li>
+        <li>Structured signal extraction with hard-coded (not just prompted) safeguards &mdash; every evidence fragment must appear verbatim in the source post</li>
+        <li>A context engine that only pulls in prior posts with an explicit, labelled reason</li>
+        <li>Deterministic signal validation (staleness, instrument mapping, SL/TP logic, market hours, conflicting positions) independent of the risk manager's numeric thresholds</li>
+        <li>Risk manager + circuit breaker (daily/weekly loss limits, API-error trips) and a manual kill switch</li>
+        <li>Three approval modes (observe / approval / practice_auto) and a live auto-approve toggle</li>
+        <li>OANDA v20 <strong>practice-only</strong> broker integration &mdash; hard-refuses to construct against the live endpoint</li>
+        <li>Full dashboard: Posts, Proposals, Trades, Metrics, Accounts, Submit &amp; Settings</li>
+        <li>SQLite audit trail of every post, classification, signal, proposal, order, and trade</li>
+        <li>130 passing unit/integration tests, OpenAI and OANDA both mocked</li>
+        <li>Operator-gated public hosting &mdash; this page</li>
+      </ul>
+    </div>
+
+    <h2 class="section-heading">Next</h2>
+    <div class="card">
+      <ul style="margin:0; padding-left:1.2em; line-height:1.7">
+        <li>Move the datastore off this host's ephemeral free-tier filesystem onto a durable external database, so history survives redeploys</li>
+        <li>Image/vision analysis for posts whose meaning depends entirely on an attached chart, currently forced to human review instead</li>
+        <li>Non-English post support (currently routed to <code>too_ambiguous</code> rather than guessed at)</li>
+        <li>Broader instrument-alias coverage as real usage surfaces gaps</li>
+      </ul>
+    </div>
+
+    <h2 class="section-heading">Future</h2>
+    <div class="card">
+      <ul style="margin:0; padding-left:1.2em; line-height:1.7">
+        <li>Support for additional practice/paper brokers beyond OANDA</li>
+        <li>Backtesting and richer analytics against historical proposals</li>
+        <li>Notification channels (email/push) for pending approvals</li>
+      </ul>
+      <div class="muted" style="margin-top:10px">
+        Deliberately not on this list: real-money live trading. This project's design treats that
+        as an unapproved, out-of-scope decision, not a checkbox to tick off later.
+      </div>
+    </div>
+  </div>
+</main>
+
+<script>
+const OPERATOR_LOGIN_ENABLED = {{ 'true' if operator_login_enabled else 'false' }};
+let OPERATOR_AUTHENTICATED = {{ 'true' if operator_authenticated else 'false' }};
+
+async function getJson(url, opts) {
+  const r = await fetch(url, opts);
+  return r.json();
+}
+
+function setOperatorGatedDisabled(disabled) {
+  document.querySelectorAll('[data-operator-gated]').forEach(el => { el.disabled = disabled; });
+}
+
+function operatorGateAttr() {
+  return (OPERATOR_LOGIN_ENABLED && !OPERATOR_AUTHENTICATED) ? 'disabled' : '';
+}
+
+async function loginOperator() {
+  const input = document.getElementById('operator-password');
+  const errorEl = document.getElementById('login-error');
+  const r = await fetch('/api/auth/login', {
+    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({password: input.value})
+  });
+  if (!r.ok) {
+    const err = await r.json();
+    errorEl.textContent = err.detail || 'Login failed.';
+    return;
+  }
+  input.value = '';
+  errorEl.textContent = '';
+  OPERATOR_AUTHENTICATED = true;
+  document.getElementById('login-form').style.display = 'none';
+  document.getElementById('logout-btn').style.display = 'inline-flex';
+  setOperatorGatedDisabled(false);
+  refreshAll();
+}
+
+async function logoutOperator() {
+  await fetch('/api/auth/logout', {method: 'POST'});
+  OPERATOR_AUTHENTICATED = false;
+  document.getElementById('login-form').style.display = 'flex';
+  document.getElementById('logout-btn').style.display = 'none';
+  setOperatorGatedDisabled(true);
+  refreshAll();
+}
+
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function pill(ok, text, warn) {
+  const cls = warn ? 'warn' : (ok ? 'ok' : 'bad');
+  return `<span class="pill ${cls}"><span class="dot"></span>${escapeHtml(text)}</span>`;
+}
+
+/* ---- tabs (WAI-ARIA APG tabs pattern: click + arrow-key navigation) ---- */
+const tabs = Array.from(document.querySelectorAll('[role="tab"]'));
+function selectTab(tab) {
+  tabs.forEach(t => {
+    const selected = t === tab;
+    t.setAttribute('aria-selected', String(selected));
+    document.getElementById(t.getAttribute('aria-controls')).hidden = !selected;
+  });
+  tab.focus();
+}
+tabs.forEach((tab, i) => {
+  tab.addEventListener('click', () => selectTab(tab));
+  tab.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowRight') selectTab(tabs[(i + 1) % tabs.length]);
+    if (e.key === 'ArrowLeft') selectTab(tabs[(i - 1 + tabs.length) % tabs.length]);
+  });
+});
+
+function minutesLeft(isoEnds) {
+  return Math.max(0, Math.ceil((new Date(isoEnds) - Date.now()) / 60000));
+}
+
+async function refreshStatus() {
+  const [status, pnl] = await Promise.all([getJson('/api/status'), getJson('/api/pnl')]);
+  document.getElementById('mode-badge').textContent = 'mode: ' + status.app_mode;
+  let html = '';
+  for (const c of status.connections) {
+    html += pill(c.connected, `${c.name}: ${c.detail}`);
+  }
+  if (status.circuit_breaker.tripped) {
+    const detail = status.circuit_breaker.active_trips.map(t =>
+      `${t.reason}${t.clears_at ? ` (clears in ${minutesLeft(t.clears_at)}m)` : ' (manual clear required)'}`
+    ).join(', ');
+    html += pill(false, `circuit breaker: ${detail}`);
+  } else {
+    html += pill(true, 'circuit breaker: clear');
+  }
+  for (const cd of status.instrument_cooldowns) {
+    html += pill(false, `${cd.instrument} cooldown: ${minutesLeft(cd.ends_at)}m left`, true);
+  }
+  html += '<span class="spacer"></span>';
+  html += pnl.error
+    ? `<span class="muted">account: ${escapeHtml(pnl.error)}</span>`
+    : `<span class="equity"><span class="label">Equity</span>${pnl.equity.toFixed(2)} ${pnl.currency}</span>`;
+  document.getElementById('status-strip').innerHTML = html;
+}
+
+async function refreshTrades() {
+  const trades = await getJson('/api/trades?limit=100');
+  const el = document.getElementById('trades-card');
+  if (!trades.length) {
+    el.innerHTML = '<div class="empty-state">No trades yet.</div>';
+    return;
+  }
+  const rows = trades.map(t => {
+    const isOpen = !t.close_time;
+    const pl = t.realized_pl;
+    const plBadge = isOpen
+      ? `<span class="badge open">OPEN</span>`
+      : `<span class="badge ${pl >= 0 ? 'win' : 'loss'}">${pl >= 0 ? '+' : ''}${pl.toFixed(2)}</span>`;
+    const sourceBadge = t.author ? `<span class="badge source">@${escapeHtml(t.author)}</span>` : '&mdash;';
+    return `<tr>
+      <td>${escapeHtml(t.instrument)}</td>
+      <td>${escapeHtml(t.direction)}</td>
+      <td class="num">${t.units != null ? Math.abs(t.units).toLocaleString() : '&mdash;'}</td>
+      <td class="num">${t.open_price ?? ''}</td>
+      <td class="num">${t.close_price ?? '&mdash;'}</td>
+      <td class="muted">${escapeHtml(t.open_time ?? '')}</td>
+      <td class="muted">${escapeHtml(t.close_time ?? '&mdash;')}</td>
+      <td>${plBadge}</td>
+      <td class="muted">${escapeHtml(t.exit_reason ?? '')}</td>
+      <td>${sourceBadge}</td>
+    </tr>`;
+  }).join('');
+  el.innerHTML = `<div class="table-wrap"><table>
+    <thead><tr><th>Instrument</th><th>Dir</th><th>Units</th><th>Open</th><th>Close</th><th>Opened</th><th>Closed</th><th>P/L</th><th>Exit</th><th>Source</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table></div>`;
+}
+
+async function refreshProposals() {
+  const items = await getJson('/api/proposals');
+  const countEl = document.getElementById('proposals-count');
+  if (items.length) { countEl.hidden = false; countEl.textContent = items.length; } else { countEl.hidden = true; }
+  const el = document.getElementById('proposals-card');
+  el.innerHTML = items.length ? items.map(p => `
+    <div class="card">
+      <div class="card-row">
+        <span class="card-title">${escapeHtml(p.signal?.instrument ?? '?')} ${escapeHtml(p.signal?.direction ?? '')}</span>
+        <span class="muted">expires ${escapeHtml(p.proposal.expires_at)}</span>
+      </div>
+      <div class="muted" style="margin-top:6px">
+        confidence: ${p.signal?.confidence ?? 'n/a'} &middot;
+        stop: ${p.signal?.stop_loss ?? 'n/a'} &middot;
+        tp: ${escapeHtml(p.signal?.take_profit_json ?? '[]')}
+      </div>
+      <div class="evidence">${escapeHtml(JSON.parse(p.signal?.evidence_json || '[]').join(' / '))}</div>
+      <div class="muted">source post: &ldquo;${escapeHtml(p.post ? p.post.text : '')}&rdquo;</div>
+      <div style="margin-top:10px; display:flex; gap:8px">
+        <button class="primary small" ${operatorGateAttr()} onclick="approve('${p.proposal.proposal_id}')">Approve</button>
+        <button class="danger small" ${operatorGateAttr()} onclick="reject('${p.proposal.proposal_id}')">Reject</button>
+      </div>
+    </div>`).join('') : '<div class="empty-state">No pending proposals.</div>';
+}
+
+const CLEARED_POSTS_KEY = 'xct_cleared_post_ids';
+const CLEARED_POSTS_MAX = 500;
+
+function loadClearedPostIds() {
+  try {
+    return new Set(JSON.parse(localStorage.getItem(CLEARED_POSTS_KEY) || '[]'));
+  } catch {
+    return new Set();
+  }
+}
+
+function saveClearedPostIds(ids) {
+  const trimmed = Array.from(ids).slice(-CLEARED_POSTS_MAX);
+  localStorage.setItem(CLEARED_POSTS_KEY, JSON.stringify(trimmed));
+}
+
+let lastFetchedPosts = [];
+
+async function refreshPosts() {
+  const items = await getJson('/api/posts?limit=25');
+  lastFetchedPosts = items;
+  const cleared = loadClearedPostIds();
+  const visible = items.filter(item => !cleared.has(item.post.post_id));
+  const el = document.getElementById('posts-card');
+  el.innerHTML = visible.length ? visible.map(item => `
+    <div class="card">
+      <div class="card-row">
+        <span class="card-title">@${escapeHtml(item.post.author)}</span>
+        <span class="muted">${escapeHtml(item.post.posted_at)}</span>
+      </div>
+      <div style="margin-top:4px">${escapeHtml(item.post.text)}</div>
+      <div class="muted" style="margin-top:6px">category: ${escapeHtml(item.classification ? item.classification.category : 'pending')}</div>
+      ${item.signal ? `<div class="muted">signal: ${escapeHtml(item.signal.signal_type)} ${escapeHtml(item.signal.instrument ?? '')} conf=${item.signal.confidence} review=${item.signal.requires_human_review}</div>` : ''}
+    </div>`).join('') : `<div class="empty-state">${items.length ? 'Feed cleared — new posts will appear here.' : 'No posts yet.'}</div>`;
+}
+
+function clearPostsFeed() {
+  const cleared = loadClearedPostIds();
+  lastFetchedPosts.forEach(item => cleared.add(item.post.post_id));
+  saveClearedPostIds(cleared);
+  refreshPosts();
+}
+
+let currentMetricsPeriod = 'today';
+
+async function refreshMetrics() {
+  const m = await getJson(`/api/metrics?period=${currentMetricsPeriod}`);
+  const el = document.getElementById('metrics-card');
+  const pnlClass = m.total_pnl > 0 ? 'positive' : (m.total_pnl < 0 ? 'negative' : '');
+  const winRateText = m.win_rate === null ? '&mdash;' : `${(m.win_rate * 100).toFixed(0)}%`;
+  el.innerHTML = `<div class="stat-grid">
+    <div class="stat-card">
+      <div class="stat-label">Trades Copied</div>
+      <div class="stat-value">${m.trades_copied}</div>
+      <div class="stat-sub">${m.open_trades} currently open</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Win Rate</div>
+      <div class="stat-value">${winRateText}</div>
+      <div class="stat-sub">${m.wins}W / ${m.losses}L of ${m.closed_trades} closed</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Total P/L</div>
+      <div class="stat-value ${pnlClass}">${m.total_pnl > 0 ? '+' : ''}${m.total_pnl.toFixed(2)}</div>
+      <div class="stat-sub">${m.closed_trades} closed trade(s) this period</div>
+    </div>
+  </div>`;
+}
+
+function setMetricsPeriod(period) {
+  currentMetricsPeriod = period;
+  document.querySelectorAll('.period-btn').forEach(btn => {
+    btn.setAttribute('aria-pressed', String(btn.dataset.period === period));
+  });
+  refreshMetrics();
+}
+
+document.querySelectorAll('.period-btn').forEach(btn => {
+  btn.addEventListener('click', () => setMetricsPeriod(btn.dataset.period));
+});
+setMetricsPeriod('today');
+
+async function refreshAccounts() {
+  const accounts = await getJson('/api/accounts');
+  const el = document.getElementById('accounts-card');
+  if (!accounts.length) {
+    el.innerHTML = '<div class="empty-state">No accounts tracked yet.</div>';
+    return;
+  }
+  const rows = accounts.map(a => `
+    <div class="card">
+      <div class="toggle-row">
+        <div class="toggle-copy">
+          <div class="card-title"><a href="${escapeHtml(a.profile_url)}" target="_blank" rel="noopener">@${escapeHtml(a.username)}</a></div>
+          <div class="muted">max ${a.max_open_positions_from_account} open position(s) from this account</div>
+        </div>
+        <div class="account-controls">
+          <label class="switch">
+            <input type="checkbox" ${a.enabled ? 'checked' : ''} ${operatorGateAttr()} onchange="toggleAccount('${escapeHtml(a.username)}', this.checked)">
+            <span class="track"></span>
+          </label>
+          <button class="danger small" ${operatorGateAttr()} onclick="removeAccount('${escapeHtml(a.username)}')">Remove</button>
+        </div>
+      </div>
+    </div>`).join('');
+  el.innerHTML = rows;
+}
+
+async function addAccount() {
+  const input = document.getElementById('a-handle');
+  const resultEl = document.getElementById('add-account-result');
+  const handle = input.value.trim();
+  if (!handle) return;
+  const r = await fetch('/api/accounts', {
+    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({handle})
+  });
+  if (!r.ok) {
+    const err = await r.json();
+    resultEl.textContent = err.detail || 'Could not add account.';
+    return;
+  }
+  input.value = '';
+  resultEl.textContent = '';
+  refreshAccounts();
+}
+
+async function toggleAccount(username, enabled) {
+  await getJson(`/api/accounts/${encodeURIComponent(username)}/toggle`, {
+    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({enabled})
+  });
+  refreshAccounts();
+}
+
+async function removeAccount(username) {
+  await getJson(`/api/accounts/${encodeURIComponent(username)}`, {method: 'DELETE'});
+  refreshAccounts();
+}
+
+async function refreshSettings() {
+  const settings = await getJson('/api/settings');
+  document.getElementById('auto-approve-toggle').checked = !!settings.auto_approve_proposals;
+}
+
+async function toggleAutoApprove(enabled) {
+  await getJson('/api/settings/auto-approve', {
+    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({enabled})
+  });
+}
+
+async function submitManual() {
+  const payload = {
+    author: document.getElementById('m-author').value,
+    text: document.getElementById('m-text').value,
+    reply_to_id: document.getElementById('m-reply').value || null,
+  };
+  const result = await getJson('/api/posts/manual', {
+    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)
+  });
+  document.getElementById('manual-result').textContent = JSON.stringify(result);
+  refreshAll();
+}
+
+async function approve(id) { await getJson(`/api/proposals/${id}/approve`, {method: 'POST'}); refreshAll(); }
+async function reject(id) { await getJson(`/api/proposals/${id}/reject`, {method: 'POST'}); refreshAll(); }
+async function triggerKillSwitch() { await getJson('/api/kill-switch', {method: 'POST'}); refreshAll(); }
+async function clearKillSwitch() { await getJson('/api/kill-switch/clear', {method: 'POST'}); refreshAll(); }
+async function clearCircuitBreaker() { await getJson('/api/circuit-breaker/clear', {method: 'POST'}); refreshAll(); }
+
+function refreshAll() {
+  refreshStatus(); refreshTrades(); refreshProposals(); refreshPosts(); refreshMetrics(); refreshAccounts();
+}
+refreshAll();
+refreshSettings();
+setInterval(refreshAll, 5000);
+</script>
+</body>
+</html>

@@ -1,0 +1,29 @@
+{
+  "manifest_version": 3,
+  "name": "X Copy-Trade Tool — Send Post",
+  "version": "1.0.0",
+  "description": "Sends the post you are currently viewing on X to your local copy-trade tool. Requires you to be already logged into X in this browser -- this extension never logs in, scrapes on a timer, or stores your X credentials.",
+  "permissions": ["storage", "activeTab", "scripting"],
+  "host_permissions": [
+    "https://x.com/*",
+    "https://twitter.com/*",
+    "http://127.0.0.1/*",
+    "http://localhost/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://x.com/*", "https://twitter.com/*"],
+      "js": ["content.js"],
+      "css": ["content.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "X Copy-Trade Tool"
+  },
+  "options_page": "options.html"
+}

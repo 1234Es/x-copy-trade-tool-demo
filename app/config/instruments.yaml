@@ -1,0 +1,78 @@
+# Alias -> OANDA v20 instrument mapping. This is a best-effort starting
+# table (see DESIGN.md Section 1: we have no authorized way to know what
+# the tracked account actually posts about). The real source of truth at
+# runtime is OANDA's own /v3/accounts/{id}/instruments metadata endpoint --
+# an alias mapping to a name here does NOT guarantee your account can
+# trade it; app/broker/oanda_practice.py checks live metadata before every
+# order and rejects anything not actually available.
+#
+# Known compliance caveat: UK retail clients have been prohibited from
+# trading crypto-asset derivatives (CFDs, spread bets) since the FCA's 2021
+# product intervention. The BTC_USD/ETH_USD aliases below are included so
+# the pipeline can still classify and extract crypto-related posts (and
+# then correctly reject them at the broker-availability check) rather than
+# crashing on an unrecognized symbol -- do not expect these to be
+# tradeable on a UK retail practice account.
+
+aliases:
+  # FX majors
+  eurusd: EUR_USD
+  eur/usd: EUR_USD
+  "eur usd": EUR_USD
+  gbpusd: GBP_USD
+  gbp/usd: GBP_USD
+  cable: GBP_USD
+  usdjpy: USD_JPY
+  usd/jpy: USD_JPY
+  audusd: AUD_USD
+  aud/usd: AUD_USD
+  aussie: AUD_USD
+
+  # FX crosses
+  gbpjpy: GBP_JPY
+  gbp/jpy: GBP_JPY
+
+  # Indices (OANDA CFD naming)
+  us30: US30_USD
+  dow: US30_USD
+  "dow jones": US30_USD
+  spx: SPX500_USD
+  spx500: SPX500_USD
+  "s&p": SPX500_USD
+  "s&p 500": SPX500_USD
+  nas100: NAS100_USD
+  nasdaq: NAS100_USD
+  ndx: NAS100_USD
+
+  # Commodities
+  gold: XAU_USD
+  xauusd: XAU_USD
+  xau/usd: XAU_USD
+  silver: XAG_USD
+  xagusd: XAG_USD
+  xag/usd: XAG_USD
+  wti: WTICO_USD
+  "crude oil": WTICO_USD
+  oil: WTICO_USD
+
+  # Crypto -- see compliance caveat above; expect these to fail the
+  # broker-availability check on a UK retail account, by design.
+  btc: BTC_USD
+  bitcoin: BTC_USD
+  btcusd: BTC_USD
+  eth: ETH_USD
+  ethereum: ETH_USD
+  ethusd: ETH_USD
+
+# Symbols known NOT to map to anything OANDA offers -- e.g. single US
+# equities, which OANDA does not provide to retail clients via this API at
+# all. Listed explicitly so the classifier can give a precise rejection
+# reason ("OANDA does not offer single-stock CFDs") instead of a generic
+# "unmapped symbol" one.
+known_unsupported:
+  - aapl
+  - tsla
+  - nvda
+  - amzn
+  - msft
+  - spy   # ETF, not the SPX500 CFD index -- deliberately not aliased together
