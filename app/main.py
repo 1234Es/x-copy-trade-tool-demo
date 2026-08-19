@@ -109,7 +109,15 @@ def main() -> None:
     # for the container to be reachable at all. Locally this is unchanged --
     # still just http://127.0.0.1:8000 / http://localhost:8000.
     port = int(os.environ.get("PORT", 8000))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    # forwarded_allow_ips defaults to trusting only 127.0.0.1 as the immediate
+    # peer before it'll rewrite request.client.host from X-Forwarded-For. On
+    # Render (and most PaaS) the immediate peer is the platform's own edge
+    # proxy, not 127.0.0.1 -- without this, every request looks like it comes
+    # from the same IP, which turns the per-IP login lockout in app/auth.py
+    # into an accidental global lockout (one bad actor locks out everyone,
+    # including the real operator). "*" is safe here specifically because the
+    # only way to reach this container at all is through that one trusted edge.
+    uvicorn.run(app, host="0.0.0.0", port=port, forwarded_allow_ips="*")
 
 
 if __name__ == "__main__":
