@@ -1,7 +1,7 @@
 """OANDA v20 REST API client, restricted to the practice environment.
 
-Verified against developer.oanda.com (re-confirmed 2026-07-13, same facts
-as the earlier oanda-spreadbet-bot project this session):
+Verified against developer.oanda.com (2026-07-13, same facts as the
+related oanda-spreadbet-bot project):
   - Practice REST base: https://api-fxpractice.oanda.com
   - Auth: `Authorization: Bearer <personal access token>`.
   - Rate limits: 120 requests/sec, HTTP 429 above that.

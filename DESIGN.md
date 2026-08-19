@@ -1,26 +1,26 @@
 # X Copy-Trade Tool — Design Document
 
-Status: **Draft for sign-off.** No execution code has been written yet.
-Covers Phase 1–8 deliverables (assumptions, feasibility, architecture, data
-flow, signal schema, risk rules, approval workflow, database design) per
-the project brief. Full implementation starts after this is approved.
+Status: **Implemented and live.** Covers the assumptions, feasibility,
+architecture, data flow, signal schema, risk rules, and approval workflow
+behind the running system — this is a record of the decisions the
+implementation follows, not a proposal awaiting sign-off.
 
 ---
 
-## 1. Assumptions & unresolved questions
+## 1. Scope decisions
 
-### Confirmed by user
-| Question | Answer |
+### Core decisions
+| Question | Decision |
 |---|---|
-| X ingestion method | Manual/JSON input adapter is the default, primary path. X API adapter is built but stays unused until you separately obtain paid X API access. |
-| OANDA account | Same UK/Ireland practice account as the `oanda-spreadbet-bot` project (own `.env` in this project, you supply the token/account ID). |
+| X ingestion method | Manual/JSON input adapter is the default, primary path. The full X API adapter is built to the real v2 endpoint contracts but stays unused by default — X has no free tier for new developers (see Section 2), so it only activates once paid API access is configured. |
+| OANDA account | A UK/Ireland practice account, same family as a related project of mine (`oanda-spreadbet-bot`) — its own `.env` in this project, own token/account ID. |
 | Instrument scope | FX majors + broad CFD coverage: EUR_USD, GBP_USD, USD_JPY, AUD_USD, US30_USD, SPX500_USD, NAS100_USD, XAU_USD, WTICO_USD, BTC_USD, ETH_USD (subject to actual OANDA instrument-metadata confirmation per instrument at runtime — see Section 2). |
 
 ### Defaults chosen (conservative, labeled, changeable in config)
-- **Jurisdiction / OANDA region:** UK/Ireland, same practice account family as
-  the earlier project. CFD-style order semantics (not spread-betting-specific
-  — this brief never mentions spread betting, and the order/position language
-  matches standard v20 CFD/forex accounts).
+- **Jurisdiction / OANDA region:** UK/Ireland, same practice-account family
+  as the related project mentioned above. CFD-style order semantics, not
+  spread-betting-specific — the order/position language matches standard
+  v20 CFD/forex accounts.
 - **Non-English posts:** out of scope for v1 — the classifier and extractor
   are only validated against English text. A post detected as non-English is
   routed to `too_ambiguous_to_classify` rather than guessed at.
@@ -34,33 +34,34 @@ the project brief. Full implementation starts after this is approved.
   screenshot with no text) is marked `missing_fields: ["image_content"]` and
   gets `requires_human_review: true`.
 - **Signal validity window:** 10 minutes from `posted_at` by default
-  (`MAX_SIGNAL_AGE_MINUTES=10`, matches the `.env.example` in the brief).
-  Chosen because retail FX/CFD levels move quickly enough that a post older
-  than this is treated as stale for auto-execution purposes; still viewable
-  in the dashboard for manual action.
+  (`MAX_SIGNAL_AGE_MINUTES=10`, matching `.env.example`). Chosen because
+  retail FX/CFD levels move quickly enough that a post older than this is
+  treated as stale for auto-execution purposes; still viewable in the
+  dashboard for manual action.
 - **Partial trade details inferred from earlier posts:** allowed **only**
   for explicitly-linked follow-ups (a reply to, or clear textual reference
   to, an existing tracked signal — see Section 5). Never inferred from mere
   recency or topical similarity.
-- **Hosting:** local machine, matching the earlier project's setup.
-- **Approval before each practice trade:** yes by default —
-  `REQUIRE_HUMAN_APPROVAL=true` and `APP_MODE=observe` are both defaults per
-  the brief. Practice auto-execution is a distinct, explicitly-opted-into
-  mode (Section 7).
+- **Hosting:** started as a local-machine tool; now also runs as a public,
+  operator-gated deployment (see the README's "Live" section).
+- **Approval before each practice trade:** on by default —
+  `REQUIRE_HUMAN_APPROVAL=true` and `APP_MODE=observe`. Practice
+  auto-execution is a distinct, explicitly-opted-into mode (Section 6).
 
-### Genuinely open items (need your input before those paths are used)
-- **OpenAI API key**: not yet provided. The NLP pipeline is built against
-  the documented Structured Outputs contract (verified below) but cannot
-  run until a key is in `.env`.
-- **X API credentials**: not applicable under the chosen default (manual
-  adapter). If you later want live monitoring, you'll need to sign up for
-  X's pay-per-use API yourself (Section 2) and provide `X_BEARER_TOKEN`.
-- **What @waltervannelli actually posts about** is unknown to me — I have
-  no authorized way to browse the account to check, and doing so without
-  one of the permitted ingestion methods would violate the brief's own
-  safety rules. The instrument-mapping table is a best-effort guess at
-  likely coverage; real posts (via the manual adapter) will reveal gaps,
-  which is expected and handled safely (unmappable instrument → reject).
+### Known gaps
+- **OpenAI API key**: required in `.env` for the NLP pipeline to run at
+  all — it's built against the documented Structured Outputs contract
+  (verified below), but does nothing without a key configured.
+- **X API credentials**: not needed under the default manual-adapter setup.
+  Live monitoring requires separately signing up for X's pay-per-use API
+  (Section 2) and setting `X_BEARER_TOKEN`.
+- **What each tracked account actually posts about** is only knowable by
+  watching real posts arrive — there's no authorized way to browse an
+  account's history up front to pre-validate coverage without one of the
+  permitted ingestion methods. The instrument-mapping table is a
+  best-effort guess at likely coverage; real posts (via the manual adapter)
+  reveal gaps, which is expected and handled safely (unmappable instrument
+  → reject).
 
 ---
 
@@ -81,18 +82,15 @@ the project brief. Full implementation starts after this is approved.
   app, ~450 search requests / 15 min per app, 15-minute rolling windows.
   A 24-hour dedup rule means re-requesting the same post/profile same-day
   is normally only billed once.
-- **Given this, and the brief's own instruction to prefer user-supplied
-  data over unauthorized access**, the manual/JSON input adapter is the
-  correct default for a demo, not a fallback of last resort. The
-  `x_api_source.py` adapter is still built to the real v2 endpoint
-  contracts (user lookup, user tweet timeline, tweet-by-ID) so it's ready
-  the moment you have paid API access — it is simply not wired into the
-  default run configuration.
+- **Given this, and a general preference for user-supplied data over
+  unauthorized access**, the manual/JSON input adapter is the correct
+  default, not a fallback of last resort. The `x_api_source.py` adapter is
+  still built to the real v2 endpoint contracts (user lookup, user tweet
+  timeline, tweet-by-ID) so it's ready the moment paid API access is
+  configured — it's simply not wired into the default run configuration.
 - Sources: [X API Pricing 2026 — Postproxy](https://postproxy.dev/blog/x-api-pricing-2026/), [X API Pricing — Blotato](https://www.blotato.com/blog/twitter-api-pricing), [X (Twitter) API in 2026 — SocialCrawl](https://www.socialcrawl.dev/blog/x-twitter-api-2026)
 
-### OANDA practice API — verified earlier this session (2026-07-12/13),
-reused here rather than re-verified from scratch since it's the same
-official source and unchanged:
+### OANDA practice API — verified 2026-07-12/13
 - Current API: **v20 REST API**. Practice base URL
   `https://api-fxpractice.oanda.com`, streaming
   `https://stream-fxpractice.oanda.com`. Auth: `Authorization: Bearer <personal
@@ -103,11 +101,11 @@ official source and unchanged:
   Stop-Loss, Guaranteed Stop-Loss, Trailing Stop-Loss. Protective
   stop-loss/take-profit attach via `stopLossOnFill`/`takeProfitOnFill` on
   the parent order.
-- **Action item for you** (same caveat as before): confirm the practice
-  sub-account you point this at is a standard v20 account with the
-  instruments you expect enabled — instrument metadata
-  (`/v3/accounts/{id}/instruments`) is fetched at runtime and is the source
-  of truth for what's actually tradeable, not the static list above.
+- **Operational note:** whichever practice sub-account this points at needs
+  to be a standard v20 account with the expected instruments enabled —
+  instrument metadata (`/v3/accounts/{id}/instruments`) is fetched at
+  runtime and is the source of truth for what's actually tradeable, not the
+  static list above.
 
 ### OpenAI Structured Outputs — verified 2026-07-13
 - Correct mechanism: `response_format: {"type": "json_schema", "json_schema": {...}, "strict": true}`
@@ -118,16 +116,12 @@ official source and unchanged:
   current-generation models.
 - `OPENAI_MODEL` is left configurable in `.env` rather than hard-coded to a
   specific snapshot, since model names change faster than this document —
-  set it to whatever current structured-outputs-capable model you have
-  access to.
+  set it to whatever current structured-outputs-capable model is available.
 - Source: [OpenAI — Structured model outputs](https://developers.openai.com/api/docs/guides/structured-outputs)
 
 ---
 
-## 3. Proposed architecture
-
-Matches the brief's suggested layout (Phase 12) with no structural changes
-— it's already well-factored for this problem:
+## 3. Architecture
 
 ```text
 x_copy_trade_tool/
@@ -141,17 +135,20 @@ x_copy_trade_tool/
         storage/          # SQLite models + repository
         monitoring/       # logging, alerts, health
         api/              # FastAPI server (dashboard backend)
+        auth.py            # operator session auth for the public deployment
         main.py
     tests/
         unit/ integration/ fixtures/
-    data/                 # sqlite db file lives here, gitignored
+    scripts/               # one-off maintenance scripts (e.g. sanitizing data before a public commit)
+    data/                 # sqlite db file lives here, gitignored except the public seed
     .env.example
     requirements.txt
+    Dockerfile / render.yaml
     README.md
 ```
 
-### Why FastAPI + a small server-rendered/HTMX-ish dashboard, not Streamlit
-Both were considered, per the brief's request to explain the trade-off:
+### Why FastAPI + a small server-rendered dashboard, not Streamlit
+Both were considered:
 
 | | FastAPI (chosen) | Streamlit |
 |---|---|---|
@@ -164,8 +161,8 @@ Streamlit is faster to a *read-only* dashboard, but this tool's core
 interaction — reviewing a proposal and clicking Approve/Reject before it
 expires — is exactly the kind of stateful, action-triggering UI Streamlit
 handles poorly. FastAPI with a minimal server-rendered HTML page (vanilla
-JS + fetch, no heavy frontend framework needed for a local demo tool) is
-the better fit and isn't meaningfully slower to build for a UI this small.
+JS + fetch, no heavy frontend framework needed) was the better fit and
+wasn't meaningfully slower to build for a UI this size.
 
 ### Data flow
 
@@ -203,25 +200,24 @@ execution/signal_validator.py ──▶ Section 6 checks (staleness, instrument
 risk/risk_manager.py ──▶ Section 7 checks (independent of the above)
         │  fails -> reject with reason, stop
         ▼
-execution/approval_workflow.py ──▶ mode-dependent (Section 7 approval modes):
+execution/approval_workflow.py ──▶ mode-dependent (Section 6 approval modes):
         │   observe: stop here, log hypothetical trade
         │   approval: create proposal, wait for human click, expire if unanswered
-        │   auto: proceed only if confidence + all checks already passed
+        │   practice_auto: proceed only if confidence + all checks already passed
         ▼
 broker/order_manager.py ──▶ OANDA practice order submission
         │
         ▼
-storage: full audit trail (Section 11 of the brief) + dashboard read model
+storage: full audit trail + dashboard read model
 ```
 
 ---
 
 ## 4. Structured signal schema
 
-Adopting the schema specified in the brief exactly, implemented as a
-Pydantic model (`app/nlp/schemas.py`) so it doubles as the JSON Schema
-passed to OpenAI's `strict: true` structured output and as the validator
-on the way back:
+Implemented as a Pydantic model (`app/nlp/schemas.py`) so it doubles as the
+JSON Schema passed to OpenAI's `strict: true` structured output and as the
+validator on the way back:
 
 ```json
 {
@@ -262,33 +258,31 @@ Two behavioral rules enforced in code, not just prompted for:
 
 ---
 
-## 5. Initial conservative risk settings
+## 5. Conservative risk settings
 
-Adopting the brief's defaults exactly, with rationale for each (all
-overridable in `app/config/`):
+Starting risk defaults, with rationale for each (all overridable in
+`app/config/`):
 
 | Setting | Default | Why |
 |---|---|---|
-| `risk_per_trade_percent` | 0.25% | Lower than the earlier TA-bot project's 0.5% — signal quality here depends on a third party's judgment plus an LLM's interpretation of it, two additional sources of error beyond a self-contained technical rule, so size down accordingly. |
-| `max_daily_loss_percent` | 1.0% | Tight, matching the "err toward no trade" posture the brief repeatedly asks for. |
+| `risk_per_trade_percent` | 0.25% | Lower than the related TA-bot project's 0.5% — signal quality here depends on a third party's judgment plus an LLM's interpretation of it, two additional sources of error beyond a self-contained technical rule, so size down accordingly. |
+| `max_daily_loss_percent` | 1.0% | Tight, matching an "err toward no trade" posture. |
 | `max_weekly_loss_percent` | 2.5% | |
 | `max_open_positions` | 2 | Copy-trading one account shouldn't need much concurrent exposure; keeps correlated-signal risk bounded. |
 | `max_trades_per_day` | 5 | A real trader posting actionable signals more than ~5x/day would be unusual; a higher rate is more likely a pipeline bug or a source flooding low-quality posts. |
-| `minimum_reward_to_risk` | 1.5 | Same floor as the earlier project — reject trades whose stated target doesn't clear this even if every other check passes. |
-| `require_stop_loss` | true | Non-negotiable per the brief — no order is ever submitted without a real, computed protective stop. By default (`missing_stop_loss_behavior: human_review`) a post lacking one routes to human review. Optionally (`missing_stop_loss_behavior: apply_risk_model`, deliberately enabled per-deployment) a missing stop/target is instead computed from `fallback_stop_distance_pips` (per instrument, pips) and `fallback_reward_to_risk_multiple` — for accounts whose author never states a stop/target in text but whose direction and entry are otherwise trusted. This changes *where the stop comes from*, never *whether one is attached*. |
+| `minimum_reward_to_risk` | 1.5 | Same floor as the related project — reject trades whose stated target doesn't clear this even if every other check passes. |
+| `require_stop_loss` | true | Non-negotiable: no order is ever submitted without a real, computed protective stop. By default (`missing_stop_loss_behavior: human_review`) a post lacking one routes to human review. Optionally (`missing_stop_loss_behavior: apply_risk_model`, deliberately enabled per-deployment) a missing stop/target is instead computed from `fallback_stop_distance_pips` (per instrument, pips) and `fallback_reward_to_risk_multiple` — for accounts whose author never states a stop/target in text but whose direction and entry are otherwise trusted. This changes *where the stop comes from*, never *whether one is attached*. |
 
-Additional controls beyond the brief's starter YAML (still Phase 7
-requirements): max exposure per instrument, max exposure per source
-account (relevant once more than one account is tracked), max trades/hour,
-cooldown after a loss, cooldown after repeated API failures, emergency
-kill switch, auto-shutdown after reconciliation failure — all specified in
-full in `app/risk/risk_manager.py` (Section 9 of the implementation).
+Additional controls beyond this starter set: max exposure per instrument,
+max exposure per source account (relevant once more than one account is
+tracked), max trades/hour, cooldown after a loss, cooldown after repeated
+API failures, emergency kill switch, auto-shutdown after reconciliation
+failure — all specified in full in `app/risk/risk_manager.py`.
 
-**These are starting values, not recommendations or guarantees of safe
-risk levels for your account.** You should treat every number in this
-table as a hypothesis to revisit once you have real practice-mode results
-to look at, the same way the earlier project's defaults were meant to be
-revisited.
+**These are starting values, not guarantees of safe risk levels for any
+given account.** Treat every number in this table as a hypothesis to
+revisit once there's real practice-mode results to look at, the same way
+the related project's defaults were meant to be revisited.
 
 ---
 
@@ -299,23 +293,24 @@ Three modes (`APP_MODE` env var), default `observe`:
 1. **`observe`** — full pipeline runs (classify → extract → validate →
    risk-check), a hypothetical order is logged with complete reasoning, and
    execution stops there. No OANDA order endpoint is ever called. This is
-   where the tool starts and stays until you deliberately change `APP_MODE`.
+   where the tool starts and stays until `APP_MODE` is deliberately
+   changed.
 
 2. **`approval`** — same pipeline, but a passing signal becomes a
    **proposal**: source post, extracted fields, evidence, risk calculation,
    and a countdown are shown on the dashboard. Nothing is submitted to
-   OANDA until you click Approve. Proposals expire automatically after
-   `PROPOSAL_EXPIRY_MINUTES` (default 5) — an unanswered proposal is treated
-   as a "no," not a pending trade that fires late.
+   OANDA until an operator clicks Approve. Proposals expire automatically
+   after `PROPOSAL_EXPIRY_MINUTES` (default 5) — an unanswered proposal is
+   treated as a "no," not a pending trade that fires late.
 
 3. **`practice_auto`** — a passing signal that also clears
-   `confidence >= MIN_SIGNAL_CONFIDENCE` (default 0.90, matching the
-   brief's `.env.example`) submits directly to the OANDA **practice**
-   account with no per-trade click — but every mandatory field, every risk
-   check, and every validation rule from Sections 6–7 still applies
-   identically; this mode changes *who* clicks "go," not *what* is allowed
-   through. Live-account trading has no equivalent mode in this version —
-   there is no configuration path that reaches a real-money endpoint.
+   `confidence >= MIN_SIGNAL_CONFIDENCE` (default 0.90) submits directly to
+   the OANDA **practice** account with no per-trade click — but every
+   mandatory field, every risk check, and every validation rule from
+   Sections 5–6 still applies identically; this mode changes *who* clicks
+   "go," not *what* is allowed through. Live-account trading has no
+   equivalent mode in this version — there is no configuration path that
+   reaches a real-money endpoint.
 
 The mode is a single source of truth read by
 `execution/approval_workflow.py`; nothing downstream (risk manager, order
@@ -329,8 +324,8 @@ switching modes can't accidentally bypass a validation or risk rule.
 - `raw_posts` — post_id (PK), author, text, posted_at, source, reply_to_id,
   quoted_post_id, is_repost, media_json, ingested_at, raw_payload_json.
   Append-only; a post is never mutated, an edit/delete is a new row
-  referencing the original (Phase 10 conflict handling needs the full
-  history, not an overwritten one).
+  referencing the original (full history preserved rather than an
+  overwritten one).
 - `classifications` — post_id (FK), category, rule_based_signals_json,
   openai_request_id, classified_at.
 - `signals` — signal_id (PK, uuid), post_id (FK), full extracted schema
@@ -344,26 +339,29 @@ switching modes can't accidentally bypass a validation or risk rule.
 - `trades` — oanda_trade_id (PK), order_id (FK), open/close price/time,
   realized_pl, exit_reason.
 - `author_glossary` — author, term, meaning, confirmed_by_human,
-  confirmed_at (Section 5's human-confirmed-only glossary).
+  confirmed_at (a human-confirmed-only glossary of author-specific
+  shorthand — see Section 5).
 - `instrument_aliases` — alias (e.g. "gold", "$DXY"), oanda_instrument,
   notes.
 - `circuit_breaker_events`, `reconciliation_log`, `account_snapshots` —
-  same shape/purpose as the earlier project's equivalents.
+  same shape/purpose as the related project's equivalents.
 
 Repository layer (`app/storage/repository.py`) is the only code that
 touches SQL, using SQLAlchemy Core (not full ORM) against a `DATABASE_URL`
-— swapping to PostgreSQL later is a connection-string change, not a
-rewrite.
+— swapping to PostgreSQL later is close to a connection-string change (see
+the Roadmap tab's "Next" section for why that's actually planned: the
+current public deployment's free-tier filesystem is ephemeral).
 
 ---
 
-## 8. What I need from you before implementation
+## 8. Public deployment
 
-1. Sign off on the five sections above, or flag anything you want changed.
-2. When ready, add to this project's own `.env`: `OPENAI_API_KEY`, and the
-   OANDA practice `OANDA_API_TOKEN`/`OANDA_ACCOUNT_ID` (same account as
-   before or a new one — your call).
-3. Nothing else blocks starting the build — the manual/JSON input adapter
-   needs no external credentials at all, so classification, extraction,
-   validation, and the observe-mode dashboard can all be exercised the
-   moment OpenAI/OANDA keys are in place.
+The system now runs two ways: locally (the setup in the README) and as a
+public, operator-gated deployment (Docker + Render). The pipeline, risk
+rules, and broker integration above are identical in both — the only
+addition is `app/auth.py`, a session-based operator login that gates every
+write route (approve/reject, kill switch, tracked accounts, manual post
+submission) behind a password, enforced server-side by middleware rather
+than by hiding a button. Public visitors get full read access to every
+dashboard tab; nothing about the pipeline itself changes based on who's
+looking at it.

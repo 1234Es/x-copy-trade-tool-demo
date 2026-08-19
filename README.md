@@ -213,9 +213,8 @@ need a selector update to keep auto-filling correctly.
       `sk-...` keys) and is a safety net, not a guarantee.
 - [ ] No browser session cookies or X login credentials exist anywhere in
       this codebase — by design, since only the manual/webhook/official-API
-      adapters are implemented. If you ever consider adding a scraping
-      adapter, that is explicitly out of scope and against the brief this
-      was built to.
+      adapters are implemented. A scraping adapter is explicitly out of
+      scope for this project, not something to add later.
 - [ ] `APP_MODE` and `REQUIRE_HUMAN_APPROVAL` are checked before leaving
       the tool running unattended for any length of time.
 

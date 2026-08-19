@@ -94,6 +94,13 @@
   .principle-list { margin: 0; padding-left: 1.2em; line-height: 1.8; }
   .principle-list li strong { color: var(--text); }
 
+  pre {
+    background: var(--bg-elevated); border: 1px solid var(--border); border-radius: var(--radius-sm);
+    padding: var(--space-3) var(--space-4); overflow-x: auto; font-family: var(--font-mono);
+    font-size: 0.85rem; line-height: 1.6; margin: 0 0 var(--space-3);
+  }
+  code { font-family: var(--font-mono); }
+
   footer {
     border-top: 1px solid var(--border); margin-top: var(--space-6); padding-top: var(--space-4);
     display: flex; flex-wrap: wrap; justify-content: space-between; gap: var(--space-3);
@@ -203,6 +210,29 @@
       <span class="tag">pytest &middot; 139 tests</span>
       <span class="tag">Docker</span>
       <span class="tag">Render</span>
+    </div>
+  </section>
+
+  <section>
+    <h2>Open source</h2>
+    <div class="card">
+      <p>
+        The whole thing is open source &mdash; classification/extraction, risk management, the
+        OANDA integration, this dashboard, and this landing page. Clone it and run your own
+        copy against your own OANDA practice account in a few minutes:
+      </p>
+      <pre><code>git clone https://github.com/1234Es/x-copy-trade-tool-demo.git
+cd x-copy-trade-tool-demo
+python -m venv .venv &amp;&amp; source .venv/bin/activate   # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+cp .env.example .env        # fill in OPENAI_API_KEY at minimum
+python -m app.main          # open http://127.0.0.1:8000</code></pre>
+      <p style="margin-bottom:0">
+        That gets the dashboard running locally with manual/webhook post input. Full setup
+        (OANDA practice credentials, the X API adapter, the browser extension, a security
+        checklist before leaving it running) is in the repo's
+        <a href="https://github.com/1234Es/x-copy-trade-tool-demo#2-setup-instructions" target="_blank" rel="noopener">README</a>.
+      </p>
     </div>
   </section>
 
