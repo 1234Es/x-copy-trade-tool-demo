@@ -345,7 +345,7 @@
 
 <header>
   <div class="header-row">
-    <h1>X Copy-Trade Tool</h1>
+    <h1><a href="/" style="color:inherit; text-decoration:none">&larr; X Copy-Trade Tool</a></h1>
     <span class="mode-badge" id="mode-badge">mode: {{ app_mode }}</span>
     <button class="danger small" data-operator-gated {% if operator_login_enabled and not operator_authenticated %}disabled title="Log in as operator to use this"{% endif %} onclick="triggerKillSwitch()">Kill switch</button>
     <button class="small" data-operator-gated {% if operator_login_enabled and not operator_authenticated %}disabled title="Log in as operator to use this"{% endif %} onclick="clearKillSwitch()">Clear kill switch</button>
@@ -472,7 +472,7 @@
         <li>OANDA v20 <strong>practice-only</strong> broker integration &mdash; hard-refuses to construct against the live endpoint</li>
         <li>Full dashboard: Posts, Proposals, Trades, Metrics, Accounts, Submit &amp; Settings</li>
         <li>SQLite audit trail of every post, classification, signal, proposal, order, and trade</li>
-        <li>130 passing unit/integration tests, OpenAI and OANDA both mocked</li>
+        <li>139 passing unit/integration tests, OpenAI and OANDA both mocked</li>
         <li>Operator-gated public hosting &mdash; this page</li>
       </ul>
     </div>
@@ -590,6 +590,12 @@ tabs.forEach((tab, i) => {
     if (e.key === 'ArrowLeft') selectTab(tabs[(i - 1 + tabs.length) % tabs.length]);
   });
 });
+// Deep-linkable tabs, e.g. /app#tab-roadmap -- selectTab() also handles the
+// initial (already-selected) tab fine, it's idempotent.
+if (location.hash) {
+  const initialTab = tabs.find(t => '#' + t.id === location.hash);
+  if (initialTab) selectTab(initialTab);
+}
 
 function minutesLeft(isoEnds) {
   return Math.max(0, Math.ceil((new Date(isoEnds) - Date.now()) / 60000));

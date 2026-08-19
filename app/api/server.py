@@ -68,6 +68,10 @@ def create_app(context: AppContext) -> FastAPI:
     templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
     @app.get("/", response_class=HTMLResponse)
+    def landing(request: Request) -> HTMLResponse:
+        return templates.TemplateResponse(request, "landing.html", {})
+
+    @app.get("/app", response_class=HTMLResponse)
     def dashboard(request: Request) -> HTMLResponse:
         return templates.TemplateResponse(
             request,
