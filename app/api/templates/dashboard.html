@@ -568,6 +568,20 @@ function decodeXTextEntities(s) {
     .replace(/&amp;/g, '&');
 }
 
+// Every timestamp from the API is UTC (see app/storage/repository.py) --
+// formatted here in UTC explicitly, regardless of the viewer's local
+// timezone, so it always matches what the system actually used, e.g. for
+// staleness/expiry checks. "2026-08-19T13:46:47+00:00" -> "19 Aug 2026, 13:46 UTC".
+function formatTimestamp(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d)) return String(iso);
+  return d.toLocaleString('en-GB', {
+    day: '2-digit', month: 'short', year: 'numeric',
+    hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'UTC',
+  }) + ' UTC';
+}
+
 function pill(ok, text, warn) {
   const cls = warn ? 'warn' : (ok ? 'ok' : 'bad');
   return `<span class="pill ${cls}"><span class="dot"></span>${escapeHtml(text)}</span>`;
@@ -646,8 +660,8 @@ async function refreshTrades() {
       <td class="num">${t.units != null ? Math.abs(t.units).toLocaleString() : '&mdash;'}</td>
       <td class="num">${t.open_price ?? ''}</td>
       <td class="num">${t.close_price ?? '&mdash;'}</td>
-      <td class="muted">${escapeHtml(t.open_time ?? '')}</td>
-      <td class="muted">${escapeHtml(t.close_time ?? '&mdash;')}</td>
+      <td class="muted">${escapeHtml(formatTimestamp(t.open_time))}</td>
+      <td class="muted">${t.close_time ? escapeHtml(formatTimestamp(t.close_time)) : '&mdash;'}</td>
       <td>${plBadge}</td>
       <td class="muted">${escapeHtml(t.exit_reason ?? '')}</td>
       <td>${sourceBadge}</td>
@@ -668,7 +682,7 @@ async function refreshProposals() {
     <div class="card">
       <div class="card-row">
         <span class="card-title">${escapeHtml(p.signal?.instrument ?? '?')} ${escapeHtml(p.signal?.direction ?? '')}</span>
-        <span class="muted">expires ${escapeHtml(p.proposal.expires_at)}</span>
+        <span class="muted">expires ${escapeHtml(formatTimestamp(p.proposal.expires_at))}</span>
       </div>
       <div class="muted" style="margin-top:6px">
         confidence: ${p.signal?.confidence ?? 'n/a'} &middot;
@@ -712,7 +726,7 @@ async function refreshPosts() {
     <div class="card">
       <div class="card-row">
         <span class="card-title">@${escapeHtml(item.post.author)}</span>
-        <span class="muted">${escapeHtml(item.post.posted_at)}</span>
+        <span class="muted">${escapeHtml(formatTimestamp(item.post.posted_at))}</span>
       </div>
       <div style="margin-top:4px">${escapeHtml(decodeXTextEntities(item.post.text))}</div>
       <div class="muted" style="margin-top:6px">category: ${escapeHtml(item.classification ? item.classification.category : 'pending')}</div>
