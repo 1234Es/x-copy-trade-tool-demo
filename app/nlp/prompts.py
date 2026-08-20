@@ -36,6 +36,12 @@ also gives a clear instruction to act (an explicit entry, price, or "in now" typ
 classify as too_ambiguous.
 - Do not guess at instrument/direction/price here -- if you cannot tell whether the post is even about a trade \
 action, that itself is a reason to choose too_ambiguous, not to guess a trade category.
+- A post reporting a completed transaction ("sold X lots", "bought X lots", "short X lots", "entered X lots") at a \
+stated price is a trade action even if it also notes the position isn't at full size yet (e.g. "not yet on \
+average", "not yet on position", "not full size", "more to come", "tot. exp N lots"). That qualifier describes the \
+author's own scaling/averaging style -- it does not make the reported transaction itself uncertain. Classify these \
+as explicit_trade_entry or trade_update (whichever fits), not too_ambiguous, based on the transaction that was \
+actually reported, not on unfamiliarity with the author's phrasing for "more to come."
 
 You will be given the post text and any available thread/reply context. Use context only to understand what the \
 post is about, not to invent facts not present in either the post or that context."""
