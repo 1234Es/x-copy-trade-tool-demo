@@ -10,7 +10,7 @@ import re
 from dataclasses import dataclass
 
 from app.monitoring.logging import get_logger
-from app.nlp.context_engine import PostContext
+from app.nlp.context_engine import ContextEngine, PostContext
 from app.nlp.openai_client import MalformedOpenAIResponseError, OpenAIClient
 from app.nlp.prompts import CLASSIFICATION_SYSTEM_PROMPT
 from app.nlp.schemas import CLASSIFICATION_JSON_SCHEMA, PostCategory, PostClassification
@@ -75,7 +75,7 @@ class Classifier:
         user_content = (
             f"POST by @{post.author} (id={post.post_id}, posted_at={post.posted_at.isoformat()}):\n"
             f'"{post.text}"\n\n'
-            f"CONTEXT:\n{self._format_minimal_context(context)}"
+            f"CONTEXT:\n{ContextEngine.format_for_prompt(context)}"
         )
 
         try:
@@ -99,9 +99,3 @@ class Classifier:
             request_id = None
 
         return ClassificationResult(classification=classification, rule_based_signals=rule_signals, openai_request_id=request_id)
-
-    @staticmethod
-    def _format_minimal_context(context: PostContext) -> str:
-        if context.parent_post:
-            return f'Parent post ({context.parent_post.link_reason}): "{context.parent_post.text}"'
-        return "(no thread context)"

@@ -107,7 +107,8 @@ class ContextEngine:
             glossary_terms=glossary_terms,
         )
 
-    def format_for_prompt(self, context: PostContext) -> str:
+    @staticmethod
+    def format_for_prompt(context: PostContext) -> str:
         """Renders context as plain text for the OpenAI user message --
         explicit about link_reason for every item so the model can weigh
         relevance itself rather than being told what's "the same trade."
