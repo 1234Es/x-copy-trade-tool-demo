@@ -6,6 +6,15 @@ Two safeguards are enforced in code, independent of what the model claims:
   2. `requires_human_review` is recomputed server-side and OR'd with the
      model's own value -- the model can only make this stricter by being
      honest about it, never looser than what our own rules require.
+
+A missing `stop_loss` is the one exception to "stricter only": when
+`missing_stop_loss_behavior` (risk.yaml) is `apply_risk_model`, a missing
+stop_loss alone does not force review here, because signal_validator.py
+will compute a fallback stop instead of rejecting. Forcing review here
+regardless would silently defeat that config -- every new_trade signal
+from an account that never states a stop would always become a proposal
+requiring a human click, even in practice_auto mode, no matter what
+missing_stop_loss_behavior says.
 """
 from __future__ import annotations
 
@@ -45,10 +54,17 @@ class ExtractionResult:
 
 
 class SignalExtractor:
-    def __init__(self, openai_client: OpenAIClient, context_engine: ContextEngine, min_confidence: float):
+    def __init__(
+        self,
+        openai_client: OpenAIClient,
+        context_engine: ContextEngine,
+        min_confidence: float,
+        missing_stop_loss_behavior: str = "human_review",
+    ):
         self.openai_client = openai_client
         self.context_engine = context_engine
         self.min_confidence = min_confidence
+        self.missing_stop_loss_behavior = missing_stop_loss_behavior
 
     def extract(self, post: Post, context: PostContext) -> ExtractionResult:
         user_content = self._build_user_content(post, context)
@@ -83,14 +99,22 @@ class SignalExtractor:
         return ExtractionResult(signal, result.request_id, None)
 
     def _enforce_human_review(self, signal: TradeSignal) -> TradeSignal:
+        stop_loss_auto_fillable = self.missing_stop_loss_behavior == "apply_risk_model"
+
         must_review = signal.requires_human_review
         if signal.confidence < self.min_confidence:
             must_review = True
         if signal.signal_type == SignalType.NEW_TRADE and (
-            signal.instrument is None or signal.direction is None or signal.stop_loss is None
+            signal.instrument is None
+            or signal.direction is None
+            or (signal.stop_loss is None and not stop_loss_auto_fillable)
         ):
             must_review = True
-        if signal.missing_fields:
+        # missing_fields may legitimately contain only "stop_loss" -- that
+        # case is covered (and possibly forgiven) by the check above, so it
+        # shouldn't also trip this blanket rule.
+        other_missing_fields = [f for f in signal.missing_fields if not (f == "stop_loss" and stop_loss_auto_fillable)]
+        if other_missing_fields:
             must_review = True
         if must_review != signal.requires_human_review:
             return signal.model_copy(update={"requires_human_review": must_review})

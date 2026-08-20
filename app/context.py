@@ -88,7 +88,16 @@ def build_context(settings: Settings | None = None) -> AppContext:
     openai_client = OpenAIClient(api_key=settings.openai_api_key, model=settings.openai_model) if settings.openai_api_key else None
     classifier = Classifier(openai_client) if openai_client else _NullClassifier()
     context_engine = ContextEngine(repository)
-    signal_extractor = SignalExtractor(openai_client, context_engine, settings.min_signal_confidence) if openai_client else None
+    signal_extractor = (
+        SignalExtractor(
+            openai_client,
+            context_engine,
+            settings.min_signal_confidence,
+            missing_stop_loss_behavior=risk_config.get("missing_stop_loss_behavior", "human_review"),
+        )
+        if openai_client
+        else None
+    )
 
     signal_validator = SignalValidator(
         repository=repository,
