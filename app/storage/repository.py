@@ -11,7 +11,8 @@ import json
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import Engine, select, update
+from sqlalchemy import Engine, Table, select, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from app.storage.models import (
@@ -48,6 +49,17 @@ def _row_to_dict(row: Any) -> dict[str, Any]:
     return result
 
 
+def _dialect_insert(engine: Engine, table: Table):
+    """SQLite (local dev) and PostgreSQL (production -- see DATABASE_URL /
+    DESIGN.md's ephemeral-filesystem note) have differently-named upsert
+    constructs, but sqlalchemy's dialect-specific Insert subclasses expose
+    the identical on_conflict_do_nothing/on_conflict_do_update API, so a
+    single call site can stay dialect-agnostic via this switch."""
+    if engine.dialect.name == "postgresql":
+        return pg_insert(table)
+    return sqlite_insert(table)
+
+
 class Repository:
     def __init__(self, engine: Engine):
         self.engine = engine
@@ -56,7 +68,7 @@ class Repository:
 
     def insert_raw_post(self, post: dict[str, Any]) -> bool:
         """Returns False if the post_id already existed (dedup), True if newly inserted."""
-        stmt = sqlite_insert(raw_posts).values(**post).on_conflict_do_nothing(index_elements=["post_id"])
+        stmt = _dialect_insert(self.engine, raw_posts).values(**post).on_conflict_do_nothing(index_elements=["post_id"])
         with self.engine.begin() as conn:
             result = conn.execute(stmt)
             return result.rowcount > 0
@@ -357,7 +369,7 @@ class Repository:
             )
 
     def insert_account_snapshot(self, snapshot: dict[str, Any]) -> None:
-        stmt = sqlite_insert(account_snapshots).values(**snapshot).on_conflict_do_update(
+        stmt = _dialect_insert(self.engine, account_snapshots).values(**snapshot).on_conflict_do_update(
             index_elements=["timestamp_utc"], set_=snapshot
         )
         with self.engine.begin() as conn:
@@ -371,7 +383,7 @@ class Repository:
             return row["last_processed_post_id"] if row else None
 
     def set_last_processed_post_id(self, source_key: str, post_id: str, now: datetime) -> None:
-        stmt = sqlite_insert(cursors).values(
+        stmt = _dialect_insert(self.engine, cursors).values(
             source_key=source_key, last_processed_post_id=post_id, updated_at=now
         ).on_conflict_do_update(
             index_elements=["source_key"], set_={"last_processed_post_id": post_id, "updated_at": now}

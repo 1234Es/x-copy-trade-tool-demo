@@ -1,3 +1,17 @@
+databases:
+  # Free-tier Postgres: replaces the SQLite file that used to live on the web
+  # service's own ephemeral filesystem (DESIGN.md's "current public
+  # deployment's free-tier filesystem is ephemeral" note) -- every redeploy
+  # was silently wiping raw_posts/signals/trades/the X-polling cursor back to
+  # whatever was last committed as the seed db. Render's free Postgres plan
+  # persists across redeploys, but is deleted after 30 days of the *database
+  # resource's* age unless upgraded to a paid plan -- unrelated to and much
+  # longer than the web service's own free-tier idle spin-down.
+  - name: x-copy-trade-tool-db
+    plan: free
+    databaseName: x_copy_trade_tool
+    user: x_copy_trade_tool
+
 services:
   - type: web
     name: x-copy-trade-tool
@@ -10,7 +24,9 @@ services:
       - key: OANDA_ENVIRONMENT
         value: practice
       - key: DATABASE_URL
-        value: sqlite:///data/copy_trader.db
+        fromDatabase:
+          name: x-copy-trade-tool-db
+          property: connectionString
       - key: SECURE_COOKIES
         value: "true"
       - key: PUBLIC_URL
