@@ -20,6 +20,20 @@ class OrderSubmissionOutcome:
     skipped_reason: str | None
 
 
+@dataclass(frozen=True)
+class CloseOutcome:
+    success: bool
+    realized_pl: float | None
+    close_price: float | None
+    rejection_reason: str | None
+
+
+@dataclass(frozen=True)
+class ModifyOutcome:
+    success: bool
+    rejection_reason: str | None
+
+
 class OrderManager:
     def __init__(self, broker: BaseBroker, repository: Repository):
         self.broker = broker
@@ -92,6 +106,53 @@ class OrderManager:
             )
 
         return OrderSubmissionOutcome(True, result, None)
+
+    def close_position(self, oanda_trade_id: str, now: datetime) -> CloseOutcome:
+        """Closes an existing OANDA trade in full, in response to a
+        full_close signal. Unlike submit(), there's no client-side
+        idempotency key to dedup on here -- the caller (execution_engine)
+        already resolves the trade via get_open_trade_for_signal()
+        immediately beforehand, and a post can only ever be processed once
+        (raw_posts.post_id is the dedup key), so a double-close of the same
+        signal isn't reachable in normal operation."""
+        try:
+            response = self.broker.close_trade(oanda_trade_id)
+        except Exception as exc:  # noqa: BLE001 -- a broker/network error must not crash the pipeline
+            return CloseOutcome(False, None, None, f"broker_error:{exc}")
+
+        if "orderRejectTransaction" in response:
+            reason = response["orderRejectTransaction"].get("rejectReason", "unknown_rejection")
+            return CloseOutcome(False, None, None, reason)
+
+        fill = response.get("orderFillTransaction")
+        if fill is None:
+            return CloseOutcome(False, None, None, "no_fill_transaction_in_close_response")
+
+        close_price = float(fill["price"])
+        realized_pl = float(fill.get("pl", 0.0))
+        self.repository.close_trade(
+            oanda_trade_id=oanda_trade_id,
+            close_price=close_price,
+            close_time=now,
+            realized_pl=realized_pl,
+            exit_reason="signal_full_close",
+        )
+        return CloseOutcome(True, realized_pl, close_price, None)
+
+    def modify_position(
+        self, oanda_trade_id: str, stop_loss_price: float | None, take_profit_price: float | None
+    ) -> ModifyOutcome:
+        """Moves the stop-loss and/or take-profit on an existing OANDA trade,
+        in response to an update_stop/update_target signal."""
+        try:
+            response = self.broker.modify_trade(oanda_trade_id, stop_loss_price, take_profit_price)
+        except Exception as exc:  # noqa: BLE001 -- a broker/network error must not crash the pipeline
+            return ModifyOutcome(False, f"broker_error:{exc}")
+
+        reject_keys = [k for k in response if k.endswith("RejectTransaction")]
+        if reject_keys:
+            return ModifyOutcome(False, ",".join(reject_keys))
+        return ModifyOutcome(True, None)
 
 
 def _safe_json(data: dict) -> str:

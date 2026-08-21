@@ -21,11 +21,20 @@ from app.monitoring.alerts import AlertSink
 from app.monitoring.logging import get_logger
 from app.nlp.classifier import Classifier
 from app.nlp.context_engine import ContextEngine
-from app.nlp.schemas import ACTIONABLE_CATEGORIES, Direction, TradeSignal
+from app.nlp.schemas import ACTIONABLE_CATEGORIES, Direction, SignalType, TradeSignal
 from app.nlp.signal_extractor import SignalExtractor
 from app.risk.risk_manager import AccountState, OpenPositionInfo, RiskManager
 from app.sources.base_source import Post
 from app.storage.repository import Repository
+
+# Signal types that act on an already-open trade rather than opening a new
+# one -- these never go through risk_manager.evaluate_trade() (its checks --
+# mandatory stop-loss, reward:risk, spread, position sizing -- are all about
+# the risk of OPENING a position, none of them make sense against a trade
+# that's being closed or adjusted) and never call order_manager.submit().
+_POSITION_MANAGEMENT_TYPES = frozenset(
+    {SignalType.UPDATE_STOP, SignalType.UPDATE_TARGET, SignalType.PARTIAL_CLOSE, SignalType.FULL_CLOSE}
+)
 
 log = get_logger("execution_engine")
 
@@ -116,6 +125,9 @@ class ExecutionEngine:
             log.info("signal_validation_rejected", signal_id=signal_id, reason=validation.reason)
             return ProcessingOutcome("validation_rejected", validation.reason, signal_id=signal_id)
 
+        if signal.signal_type in _POSITION_MANAGEMENT_TYPES:
+            return self._process_position_management(signal, signal_id, validation, now)
+
         account_state = self._build_account_state()
         risk_decision = self.risk_manager.evaluate_trade(
             instrument=validation.oanda_instrument,
@@ -185,6 +197,9 @@ class ExecutionEngine:
             log.info("proposal_execution_validation_rejected", proposal_id=proposal_id, signal_id=proposal["signal_id"], reason=validation.reason)
             return ProcessingOutcome("validation_rejected", validation.reason, signal_id=proposal["signal_id"])
 
+        if signal.signal_type in _POSITION_MANAGEMENT_TYPES:
+            return self._resolve_and_execute_management(signal, proposal["signal_id"], now)
+
         account_state = self._build_account_state()
         risk_decision = self.risk_manager.evaluate_trade(
             instrument=validation.oanda_instrument,
@@ -234,6 +249,111 @@ class ExecutionEngine:
         if shutdown:
             self.alert_sink.send("circuit_breaker_shutdown", "Repeated order rejections tripped the circuit breaker", {})
         return ProcessingOutcome("order_rejected", reason, signal_id=signal_id)
+
+    def _process_position_management(
+        self, signal: TradeSignal, signal_id: str, validation, now: datetime
+    ) -> ProcessingOutcome:
+        """Handles update_stop / update_target / partial_close / full_close
+        signals -- these act on an already-open trade, so they skip
+        risk_manager.evaluate_trade() entirely (its checks are all about the
+        risk of opening a new position) and go through the same
+        observe/approval/practice_auto gate as a new_trade signal, just with
+        a different execution step at the end."""
+        if signal.signal_type == SignalType.PARTIAL_CLOSE:
+            # The extraction schema (DESIGN.md Section 4) has no field for
+            # how much to close -- a lot size or fraction. Guessing one would
+            # mean inventing a number nothing in the post or schema actually
+            # supports, which this system's extraction rules explicitly
+            # forbid elsewhere (see prompts.py). Always route to a human
+            # rather than silently doing nothing or picking an arbitrary size.
+            self.repository.update_signal_validation(signal_id, "approved", None)
+            proposal_id = self.approval_workflow.create_proposal(signal_id, now)
+            self.alert_sink.send(
+                "new_proposal",
+                f"Partial close for {validation.oanda_instrument} -- size must be set manually",
+                {"signal_id": signal_id, "proposal_id": proposal_id},
+            )
+            return ProcessingOutcome(
+                "proposal_created", "partial_close has no auto-determined size", signal_id=signal_id, proposal_id=proposal_id
+            )
+
+        if signal.referenced_trade_id is None:
+            self.repository.update_signal_validation(signal_id, "rejected", "no_referenced_trade_to_act_on")
+            log.info("signal_validation_rejected", signal_id=signal_id, reason="no_referenced_trade_to_act_on")
+            return ProcessingOutcome("validation_rejected", "no_referenced_trade_to_act_on", signal_id=signal_id)
+
+        open_trade = self.repository.get_open_trade_for_signal(signal.referenced_trade_id)
+        if open_trade is None:
+            self.repository.update_signal_validation(signal_id, "rejected", "referenced_trade_not_open")
+            log.info("signal_validation_rejected", signal_id=signal_id, reason="referenced_trade_not_open")
+            return ProcessingOutcome("validation_rejected", "referenced_trade_not_open", signal_id=signal_id)
+
+        self.repository.update_signal_validation(signal_id, "approved", None)
+
+        workflow_decision = self.approval_workflow.decide(signal)
+        if workflow_decision.action == WorkflowAction.LOG_HYPOTHETICAL:
+            log.info(
+                "hypothetical_position_management_logged",
+                signal_id=signal_id, signal_type=signal.signal_type.value, oanda_trade_id=open_trade["oanda_trade_id"],
+            )
+            return ProcessingOutcome("logged_hypothetical", workflow_decision.reason, signal_id=signal_id)
+
+        if workflow_decision.action == WorkflowAction.CREATE_PROPOSAL:
+            proposal_id = self.approval_workflow.create_proposal(signal_id, now)
+            self.alert_sink.send(
+                "new_proposal", f"{signal.signal_type.value} proposal for {validation.oanda_instrument}",
+                {"signal_id": signal_id, "proposal_id": proposal_id},
+            )
+            return ProcessingOutcome("proposal_created", workflow_decision.reason, signal_id=signal_id, proposal_id=proposal_id)
+
+        return self._execute_management(signal, signal_id, open_trade, now)
+
+    def _resolve_and_execute_management(self, signal: TradeSignal, signal_id: str, now: datetime) -> ProcessingOutcome:
+        """Same as the EXECUTE_NOW tail of _process_position_management, but
+        entered from execute_approved_proposal (after a human already
+        approved the proposal) -- resolves the referenced trade fresh, since
+        time has passed since the proposal was created."""
+        if signal.signal_type == SignalType.PARTIAL_CLOSE:
+            return ProcessingOutcome("order_skipped", "partial_close has no auto-determined size", signal_id=signal_id)
+        if signal.referenced_trade_id is None:
+            return ProcessingOutcome("order_skipped", "no_referenced_trade_to_act_on", signal_id=signal_id)
+        open_trade = self.repository.get_open_trade_for_signal(signal.referenced_trade_id)
+        if open_trade is None:
+            return ProcessingOutcome("order_skipped", "referenced_trade_not_open", signal_id=signal_id)
+        return self._execute_management(signal, signal_id, open_trade, now)
+
+    def _execute_management(
+        self, signal: TradeSignal, signal_id: str, open_trade: dict[str, Any], now: datetime
+    ) -> ProcessingOutcome:
+        oanda_trade_id = open_trade["oanda_trade_id"]
+
+        if signal.signal_type == SignalType.FULL_CLOSE:
+            outcome = self.order_manager.close_position(oanda_trade_id, now)
+            if outcome.success:
+                self.risk_manager.record_trade_closed(open_trade["instrument"], outcome.realized_pl or 0.0, now)
+                self.alert_sink.send(
+                    "trade_closed", f"{open_trade['instrument']} closed per signal", {"signal_id": signal_id}
+                )
+                return ProcessingOutcome("executed", "trade_closed", signal_id=signal_id)
+            self.alert_sink.send("close_rejected", f"Close rejected: {outcome.rejection_reason}", {"signal_id": signal_id})
+            return ProcessingOutcome("order_rejected", outcome.rejection_reason, signal_id=signal_id)
+
+        # update_stop / update_target
+        stop_loss_price = signal.stop_loss if signal.signal_type == SignalType.UPDATE_STOP else None
+        take_profit_price = (
+            signal.take_profit[0] if signal.signal_type == SignalType.UPDATE_TARGET and signal.take_profit else None
+        )
+        if stop_loss_price is None and take_profit_price is None:
+            return ProcessingOutcome("order_skipped", "no_new_stop_or_target_in_signal", signal_id=signal_id)
+
+        outcome = self.order_manager.modify_position(oanda_trade_id, stop_loss_price, take_profit_price)
+        if outcome.success:
+            self.alert_sink.send(
+                "trade_modified", f"{open_trade['instrument']} stop/target updated per signal", {"signal_id": signal_id}
+            )
+            return ProcessingOutcome("executed", "trade_modified", signal_id=signal_id)
+        self.alert_sink.send("modify_rejected", f"Modify rejected: {outcome.rejection_reason}", {"signal_id": signal_id})
+        return ProcessingOutcome("order_rejected", outcome.rejection_reason, signal_id=signal_id)
 
     def _build_account_state(self) -> AccountState:
         snapshot = self.broker.get_account_snapshot()

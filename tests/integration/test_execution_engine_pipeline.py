@@ -24,10 +24,12 @@ from app.storage.repository import Repository
 from tests.fixtures.sample_posts import (
     CRYPTIC_POST,
     EXPLICIT_LONG_POST,
+    FULL_CLOSE_POST,
     MISSING_STOP_POST,
     NOW,
     STALE_POST,
     UNRELATED_POST,
+    UPDATE_STOP_POST,
 )
 
 ALIASES = {"eurusd": "EUR_USD"}
@@ -214,3 +216,94 @@ def test_practice_auto_never_double_submits_same_signal():
     outcome = engine.process_post(EXPLICIT_LONG_POST, now=NOW)
     assert outcome.status == "duplicate_post"
     broker.submit_order.assert_called_once()
+
+
+def _full_close_payload(referenced_trade_id: str, **overrides) -> dict:
+    base = {
+        "post_id": "post-close", "author": "waltervannelli", "signal_type": "full_close", "instrument": "EURUSD",
+        "direction": None, "order_type": None, "entry_price": None, "entry_zone_low": None, "entry_zone_high": None,
+        "stop_loss": None, "take_profit": [], "timeframe": None, "valid_until": None,
+        "referenced_trade_id": referenced_trade_id, "confidence": 0.95, "evidence": ["Closed EURUSD long at 1.0900"],
+        "assumptions": [], "missing_fields": [], "requires_human_review": False, "reasoning_summary": "clear close",
+    }
+    base.update(overrides)
+    return base
+
+
+def _update_stop_payload(referenced_trade_id: str, **overrides) -> dict:
+    base = {
+        "post_id": "post-move-stop", "author": "waltervannelli", "signal_type": "update_stop", "instrument": "EURUSD",
+        "direction": None, "order_type": None, "entry_price": None, "entry_zone_low": None, "entry_zone_high": None,
+        "stop_loss": 1.0850, "take_profit": [], "timeframe": None, "valid_until": None,
+        "referenced_trade_id": referenced_trade_id, "confidence": 0.95, "evidence": ["Moving stop on EURUSD long to 1.0850"],
+        "assumptions": [], "missing_fields": [], "requires_human_review": False, "reasoning_summary": "moved to breakeven",
+    }
+    base.update(overrides)
+    return base
+
+
+def test_full_close_signal_closes_the_referenced_trade():
+    # Regression test: risk_manager.evaluate_trade()'s mandatory stop-loss
+    # check used to run unconditionally for every signal type, including
+    # full_close -- which has no stop_loss by definition -- so every close
+    # instruction was silently rejected with missing_or_invalid_stop_loss
+    # and no order/position code path ever ran for it at all.
+    broker = _broker()
+    broker.submit_order.return_value = MagicMock(
+        success=True, oanda_order_id="o1", oanda_trade_id="t1", fill_price=1.0851, rejection_reason=None, raw_response={}
+    )
+    broker.close_trade.return_value = {"orderFillTransaction": {"price": "1.0900", "pl": "50.0"}}
+
+    engine, repository, mock_openai = _build_engine("practice_auto", _valid_signal_payload(confidence=0.95), broker=broker)
+    open_outcome = engine.process_post(EXPLICIT_LONG_POST, now=NOW)
+    assert open_outcome.status == "executed"
+    entry_signal_id = open_outcome.signal_id
+
+    mock_openai.structured_completion.side_effect = [
+        StructuredCompletionResult(request_id="req-classify-2", parsed={"category": "full_close_instruction", "reasoning": "clear close"}, raw_content="{}"),
+        StructuredCompletionResult(request_id="req-extract-2", parsed=_full_close_payload(entry_signal_id), raw_content="{}"),
+    ]
+    close_outcome = engine.process_post(FULL_CLOSE_POST, now=NOW)
+
+    assert close_outcome.status == "executed"
+    assert close_outcome.detail == "trade_closed"
+    broker.close_trade.assert_called_once_with("t1")
+    assert repository.get_open_trades() == []
+
+
+def test_update_stop_signal_modifies_the_referenced_trade():
+    broker = _broker()
+    broker.submit_order.return_value = MagicMock(
+        success=True, oanda_order_id="o1", oanda_trade_id="t1", fill_price=1.0851, rejection_reason=None, raw_response={}
+    )
+    broker.modify_trade.return_value = {}
+
+    engine, repository, mock_openai = _build_engine("practice_auto", _valid_signal_payload(confidence=0.95), broker=broker)
+    open_outcome = engine.process_post(EXPLICIT_LONG_POST, now=NOW)
+    entry_signal_id = open_outcome.signal_id
+
+    mock_openai.structured_completion.side_effect = [
+        StructuredCompletionResult(request_id="req-classify-2", parsed={"category": "stop_loss_adjustment", "reasoning": "clear stop move"}, raw_content="{}"),
+        StructuredCompletionResult(request_id="req-extract-2", parsed=_update_stop_payload(entry_signal_id), raw_content="{}"),
+    ]
+    outcome = engine.process_post(UPDATE_STOP_POST, now=NOW)
+
+    assert outcome.status == "executed"
+    assert outcome.detail == "trade_modified"
+    broker.modify_trade.assert_called_once_with("t1", 1.0850, None)
+    # A stop-move must never touch the open trade record itself (still open,
+    # units/instrument unchanged) -- only the broker-side protective order.
+    assert len(repository.get_open_trades()) == 1
+
+
+def test_full_close_with_no_referenced_trade_is_skipped_not_guessed():
+    engine, repository, mock_openai = _build_engine(
+        "practice_auto", None,
+    )
+    mock_openai.structured_completion.side_effect = [
+        StructuredCompletionResult(request_id="req-classify", parsed={"category": "full_close_instruction", "reasoning": "close, but which one?"}, raw_content="{}"),
+        StructuredCompletionResult(request_id="req-extract", parsed=_full_close_payload(None), raw_content="{}"),
+    ]
+    outcome = engine.process_post(FULL_CLOSE_POST, now=NOW)
+    assert outcome.status == "validation_rejected"
+    assert outcome.detail == "no_referenced_trade_to_act_on"

@@ -45,3 +45,7 @@ STALE_POST = make_post(
     post_id="post-stale",
     posted_at=NOW.replace(hour=10),  # 4 hours before NOW, well past a 10-minute staleness window
 )
+
+FULL_CLOSE_POST = make_post("Closed EURUSD long at 1.0900, +50 pips.", post_id="post-close")
+
+UPDATE_STOP_POST = make_post("Moving stop on EURUSD long to 1.0850, breakeven.", post_id="post-move-stop")

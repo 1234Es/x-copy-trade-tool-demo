@@ -274,6 +274,19 @@ class Repository:
             ).mappings().all()
             return [_row_to_dict(r) for r in rows]
 
+    def get_open_trade_for_signal(self, signal_id: str) -> dict[str, Any] | None:
+        """The still-open trade produced by a given signal_id, if any --
+        resolves a close/stop-move/target-move signal's `referenced_trade_id`
+        (itself a signal_id, per DESIGN.md Section 4, not an OANDA trade id)
+        to the actual open trade it should act on."""
+        with self.engine.connect() as conn:
+            row = conn.execute(
+                select(trades, orders.c.units)
+                .join(orders, trades.c.order_id == orders.c.order_id)
+                .where(orders.c.signal_id == signal_id, trades.c.close_time.is_(None))
+            ).mappings().first()
+            return _row_to_dict(row) if row else None
+
     def get_open_trades_for_instrument(self, instrument: str) -> list[dict[str, Any]]:
         with self.engine.connect() as conn:
             rows = conn.execute(
