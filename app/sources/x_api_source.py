@@ -36,6 +36,17 @@ class XApiRateLimitError(XApiError):
     pass
 
 
+class XApiCreditsDepletedError(XApiError):
+    """HTTP 402 -- the pay-per-use account has run out of prepaid credits
+    (see DESIGN.md Section 2). Distinct from XApiError so callers can
+    surface this specific, billing-side condition clearly instead of a
+    generic polling failure -- retrying does not help until the account is
+    topped up at developer.x.com, so this is deliberately NOT in the
+    @retry decorator's retry_if_exception_type tuple below."""
+
+    pass
+
+
 class XApiSource(BaseSource):
     name = "x_api"
 
@@ -62,6 +73,8 @@ class XApiSource(BaseSource):
         response = self._session.get(url, params=params, timeout=self._timeout)
         if response.status_code == 429:
             raise XApiRateLimitError(response.status_code, response.text)
+        if response.status_code == 402:
+            raise XApiCreditsDepletedError(response.status_code, response.text)
         if not response.ok:
             raise XApiError(response.status_code, response.text)
         return response.json()

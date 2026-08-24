@@ -23,6 +23,7 @@ from app.execution.approval_workflow import ApprovalWorkflow
 from app.execution.execution_engine import ExecutionEngine
 from app.execution.signal_validator import SignalValidator
 from app.monitoring.alerts import CompositeAlertSink
+from app.monitoring.health import XPollState
 from app.monitoring.logging import configure_logging
 from app.nlp.classifier import Classifier
 from app.nlp.context_engine import ContextEngine
@@ -54,6 +55,7 @@ class AppContext:
     known_unsupported: set[str]
     tracked_accounts: list[dict]
     auth_state: AuthState
+    x_poll_state: XPollState
 
 
 def build_context(settings: Settings | None = None) -> AppContext:
@@ -148,6 +150,7 @@ def build_context(settings: Settings | None = None) -> AppContext:
         known_unsupported=known_unsupported,
         tracked_accounts=tracked_accounts,
         auth_state=AuthState(),
+        x_poll_state=XPollState(),
     )
 
 

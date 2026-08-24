@@ -123,7 +123,7 @@ def create_app(context: AppContext) -> FastAPI:
         now = datetime.now(timezone.utc)
         oanda_status = check_oanda(context.broker if context.settings.oanda_api_token else None)
         openai_status = check_openai(context.settings.openai_api_key)
-        x_status = check_x_api(context.settings.x_bearer_token)
+        x_status = check_x_api(context.settings.x_bearer_token, context.x_poll_state)
         return JSONResponse(
             {
                 "app_mode": context.settings.app_mode,

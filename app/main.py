@@ -17,7 +17,7 @@ import uvicorn
 from app.api.server import create_app
 from app.context import build_context
 from app.monitoring.logging import get_logger
-from app.sources.x_api_source import XApiSource
+from app.sources.x_api_source import XApiCreditsDepletedError, XApiSource
 
 log = get_logger("main")
 
@@ -38,10 +38,36 @@ def _x_polling_loop(context) -> None:  # noqa: ANN001
             since_id = context.repository.get_last_processed_post_id(cursor_key)
             try:
                 posts = x_source.fetch_new_posts_for_username(username, since_id)
+            except XApiCreditsDepletedError as exc:
+                log.error("x_api_poll_failed", username=username, error=str(exc))
+                context.risk_manager.record_api_error(datetime.now(timezone.utc))
+                context.x_poll_state.last_error = str(exc)
+                # Alert once on the OK -> depleted transition, not every poll
+                # cycle (X_POLL_INTERVAL_SECONDS=60 would otherwise spam an
+                # alert every minute for as long as the account stays unpaid).
+                if not context.x_poll_state.credits_depleted:
+                    context.x_poll_state.credits_depleted = True
+                    context.alert_sink.send(
+                        "x_api_credits_depleted",
+                        "X API credits depleted (HTTP 402) -- post polling has stopped for every tracked account "
+                        "until the account is topped up at developer.x.com. No new trade signals will arrive until "
+                        "then.",
+                        {"username": username},
+                    )
+                continue
             except Exception as exc:  # noqa: BLE001 -- one bad poll must not kill the loop
                 log.error("x_api_poll_failed", username=username, error=str(exc))
                 context.risk_manager.record_api_error(datetime.now(timezone.utc))
+                context.x_poll_state.last_error = str(exc)
                 continue
+
+            context.x_poll_state.last_success_at = datetime.now(timezone.utc)
+            context.x_poll_state.last_error = None
+            if context.x_poll_state.credits_depleted:
+                context.x_poll_state.credits_depleted = False
+                context.alert_sink.send(
+                    "x_api_credits_restored", "X API polling has resumed successfully.", {"username": username}
+                )
             for post in posts:
                 context.execution_engine.process_post(post)
                 context.repository.set_last_processed_post_id(cursor_key, post.post_id, datetime.now(timezone.utc))
