@@ -110,10 +110,18 @@ class SignalExtractor:
             or (signal.stop_loss is None and not stop_loss_auto_fillable)
         ):
             must_review = True
-        # missing_fields may legitimately contain only "stop_loss" -- that
-        # case is covered (and possibly forgiven) by the check above, so it
-        # shouldn't also trip this blanket rule.
-        other_missing_fields = [f for f in signal.missing_fields if not (f == "stop_loss" and stop_loss_auto_fillable)]
+        # missing_fields may legitimately contain "stop_loss" (covered, and
+        # possibly forgiven, by the check above) or "entry_price" -- a null
+        # entry_price is a deliberate, safe simplification meaning "market
+        # order at the prevailing price" (prompts.py rule 12: a stated
+        # number framed as the position's blended running average, not a
+        # fresh fill, must not be used as entry_price), not missing
+        # information that needs a human's judgment call. Neither should
+        # trip this blanket rule on its own.
+        other_missing_fields = [
+            f for f in signal.missing_fields
+            if not (f == "stop_loss" and stop_loss_auto_fillable) and f != "entry_price"
+        ]
         if other_missing_fields:
             must_review = True
         if must_review != signal.requires_human_review:

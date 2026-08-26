@@ -87,6 +87,16 @@ lower confidence, adding a note to `assumptions`.
 new_trade is missing (instrument, direction, or stop_loss), the instrument could not be mapped with confidence, or \
 you used any assumption to fill a required field. When in doubt, set it true -- a false negative here (missing a \
 review flag on a signal that needed one) is a worse failure than an unnecessary review flag.
+12. Some authors state a price framed as "the average" (or "average price") meaning the blended cost basis across \
+their WHOLE position after many prior adds -- not a fresh fill for the update in this post. This is distinguishable \
+from a fresh fill price by phrasing: "sold 2.5 lots at 1.1665, not yet on average" states 1.1665 as THIS increment's \
+own fresh price (the average is explicitly what it ISN'T yet part of); "going short 20 lots at the average 1.1549" \
+states 1.1549 AS the average itself, describing the position's blended cost rather than a price to act on now. A \
+blended average can be far from the current market (it mixes fills made at very different times) and must never be \
+used as `entry_price` for a new increment -- when the only price given is framed this way, leave `entry_price` null \
+(implying a market order at the prevailing price), note it in `assumptions`, and add `"entry_price"` to \
+`missing_fields`. Only use a stated number as `entry_price` when the post frames it as this specific update's own \
+fill or order price.
 
 You will be given: the post text, thread/reply context if available, recent posts by the same author, currently \
 open signals from this author (with their IDs, for `referenced_trade_id` resolution), and a confirmed \

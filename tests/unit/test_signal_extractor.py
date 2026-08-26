@@ -151,3 +151,29 @@ def test_forces_human_review_when_missing_fields_present():
 
     assert result.accepted
     assert result.signal.requires_human_review is True
+
+
+def test_missing_entry_price_alone_does_not_force_human_review():
+    # A null entry_price is a deliberate, safe simplification meaning
+    # "market order at the prevailing price" (prompts.py rule 12: a stated
+    # number framed as the position's blended running average, not a fresh
+    # fill, must not be used as entry_price) -- not missing information
+    # that needs a human's judgment call, so it shouldn't trip the generic
+    # missing_fields review rule the way an actually-missing field does.
+    extractor = _make_extractor(
+        _valid_parsed(entry_price=None, missing_fields=["entry_price"], requires_human_review=False)
+    )
+    result = extractor.extract(EXPLICIT_LONG_POST, EMPTY_CONTEXT)
+
+    assert result.accepted
+    assert result.signal.requires_human_review is False
+
+
+def test_missing_entry_price_alongside_another_missing_field_still_forces_review():
+    extractor = _make_extractor(
+        _valid_parsed(entry_price=None, missing_fields=["entry_price", "timeframe"], requires_human_review=False)
+    )
+    result = extractor.extract(EXPLICIT_LONG_POST, EMPTY_CONTEXT)
+
+    assert result.accepted
+    assert result.signal.requires_human_review is True
