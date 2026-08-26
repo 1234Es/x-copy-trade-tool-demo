@@ -269,6 +269,47 @@ def create_app(context: AppContext) -> FastAPI:
     def all_trades(limit: int = 200) -> JSONResponse:
         return JSONResponse(_jsonable(context.repository.get_all_trades(limit=limit)))
 
+    @app.post("/api/trades/{oanda_trade_id}/close")
+    def close_trade(oanda_trade_id: str) -> JSONResponse:
+        """Operator-initiated close of a single open position. Like every
+        other non-GET route it is gated by the operator-session middleware
+        above (it is deliberately NOT in _AUTH_EXEMPT_PATHS), so a public
+        visitor can see the button but the request is refused server-side --
+        the disabled attribute in the dashboard is a courtesy, never the
+        control.
+
+        Reuses order_manager.close_position(), the same path a full_close
+        signal takes, so a manual close goes through identical broker
+        handling and DB bookkeeping -- only the recorded exit_reason
+        differs.
+        """
+        now = datetime.now(timezone.utc)
+        trade = next(
+            (t for t in context.repository.get_open_trades() if t["oanda_trade_id"] == oanda_trade_id), None
+        )
+        if trade is None:
+            raise HTTPException(status_code=404, detail="No open trade with that id.")
+
+        outcome = context.order_manager.close_position(
+            oanda_trade_id, now, exit_reason="manual_close_by_operator"
+        )
+        if not outcome.success:
+            raise HTTPException(status_code=502, detail=f"Broker refused the close: {outcome.rejection_reason}")
+
+        # Keep risk state honest: a manual close still feeds the
+        # consecutive-loss counter and per-instrument cooldown, exactly as a
+        # signal-driven or stop-loss close does. Closing by hand is not a way
+        # to sidestep the risk rules that follow from a losing trade.
+        context.risk_manager.record_trade_closed(trade["instrument"], outcome.realized_pl or 0.0, now)
+        context.alert_sink.send(
+            "trade_closed_manually",
+            f"{trade['instrument']} closed manually by operator (P&L {outcome.realized_pl})",
+            {"oanda_trade_id": oanda_trade_id},
+        )
+        return JSONResponse(
+            {"status": "closed", "realized_pl": outcome.realized_pl, "close_price": outcome.close_price}
+        )
+
     @app.get("/api/settings")
     def get_settings() -> JSONResponse:
         return JSONResponse({"auto_approve_proposals": context.approval_workflow.auto_approve})

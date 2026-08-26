@@ -107,14 +107,21 @@ class OrderManager:
 
         return OrderSubmissionOutcome(True, result, None)
 
-    def close_position(self, oanda_trade_id: str, now: datetime) -> CloseOutcome:
+    def close_position(
+        self, oanda_trade_id: str, now: datetime, exit_reason: str = "signal_full_close"
+    ) -> CloseOutcome:
         """Closes an existing OANDA trade in full, in response to a
         full_close signal. Unlike submit(), there's no client-side
         idempotency key to dedup on here -- the caller (execution_engine)
         already resolves the trade via get_open_trade_for_signal()
         immediately beforehand, and a post can only ever be processed once
         (raw_posts.post_id is the dedup key), so a double-close of the same
-        signal isn't reachable in normal operation."""
+        signal isn't reachable in normal operation.
+
+        `exit_reason` is recorded on the trade so the dashboard can tell a
+        close the pipeline decided on apart from one an operator clicked
+        (see /api/trades/{id}/close) -- they are very different things when
+        reading back what happened to a position."""
         try:
             response = self.broker.close_trade(oanda_trade_id)
         except Exception as exc:  # noqa: BLE001 -- a broker/network error must not crash the pipeline
@@ -135,7 +142,7 @@ class OrderManager:
             close_price=close_price,
             close_time=now,
             realized_pl=realized_pl,
-            exit_reason="signal_full_close",
+            exit_reason=exit_reason,
         )
         return CloseOutcome(True, realized_pl, close_price, None)
 

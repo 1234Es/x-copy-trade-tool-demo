@@ -654,6 +654,14 @@ async function refreshTrades() {
       ? `<span class="badge open">OPEN</span>`
       : `<span class="badge ${pl >= 0 ? 'win' : 'loss'}">${pl >= 0 ? '+' : ''}${pl.toFixed(2)}</span>`;
     const sourceBadge = t.author ? `<span class="badge source">@${escapeHtml(t.author)}</span>` : '&mdash;';
+    const tradeId = escapeHtml(t.oanda_trade_id);
+    let actions = '&mdash;';
+    if (isOpen) {
+      actions = pendingCloseTradeId === t.oanda_trade_id
+        ? `<button class="danger small" onclick="confirmCloseTrade('${tradeId}')">Confirm close</button>
+           <button class="small" onclick="cancelCloseTrade()">Cancel</button>`
+        : `<button class="danger small" ${operatorGateAttr()} onclick="requestCloseTrade('${tradeId}')">Close</button>`;
+    }
     return `<tr>
       <td>${escapeHtml(t.instrument)}</td>
       <td>${escapeHtml(t.direction)}</td>
@@ -665,12 +673,51 @@ async function refreshTrades() {
       <td>${plBadge}</td>
       <td class="muted">${escapeHtml(t.exit_reason ?? '')}</td>
       <td>${sourceBadge}</td>
+      <td>${actions}</td>
     </tr>`;
   }).join('');
-  el.innerHTML = `<div class="table-wrap"><table>
-    <thead><tr><th>Instrument</th><th>Dir</th><th>Units</th><th>Open</th><th>Close</th><th>Opened</th><th>Closed</th><th>P/L</th><th>Exit</th><th>Source</th></tr></thead>
+  const errorBanner = tradeActionError
+    ? `<div class="pill bad" style="margin-bottom:var(--space-3)">${escapeHtml(tradeActionError)}</div>`
+    : '';
+  el.innerHTML = `${errorBanner}<div class="table-wrap"><table>
+    <thead><tr><th>Instrument</th><th>Dir</th><th>Units</th><th>Open</th><th>Close</th><th>Opened</th><th>Closed</th><th>P/L</th><th>Exit</th><th>Source</th><th></th></tr></thead>
     <tbody>${rows}</tbody>
   </table></div>`;
+}
+
+// Close-confirmation state is held here rather than in the row markup
+// because refreshAll() rebuilds that innerHTML every 5 seconds -- an inline
+// "are you sure?" rendered into the row would be wiped out from under the
+// operator mid-decision. A native confirm() would survive the refresh but
+// blocks the whole page, so this keeps the two-step entirely in the DOM.
+let pendingCloseTradeId = null;
+let tradeActionError = '';
+const CLOSE_CONFIRM_TIMEOUT_MS = 10000;
+
+function requestCloseTrade(tradeId) {
+  pendingCloseTradeId = tradeId;
+  tradeActionError = '';
+  refreshTrades();
+  // Don't leave a primed destructive button sitting there indefinitely.
+  setTimeout(() => {
+    if (pendingCloseTradeId === tradeId) { pendingCloseTradeId = null; refreshTrades(); }
+  }, CLOSE_CONFIRM_TIMEOUT_MS);
+}
+
+function cancelCloseTrade() {
+  pendingCloseTradeId = null;
+  refreshTrades();
+}
+
+async function confirmCloseTrade(tradeId) {
+  pendingCloseTradeId = null;
+  tradeActionError = '';
+  const result = await getJson(`/api/trades/${tradeId}/close`, {method: 'POST'});
+  // FastAPI returns {"detail": "..."} for 401/404/502 -- surface the real
+  // reason (not logged in, already closed, broker refused) instead of
+  // silently appearing to do nothing.
+  if (result && result.detail) tradeActionError = result.detail;
+  refreshAll();
 }
 
 async function refreshProposals() {
