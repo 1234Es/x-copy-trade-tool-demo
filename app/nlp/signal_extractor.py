@@ -30,6 +30,14 @@ from app.nlp.schemas import TRADE_SIGNAL_JSON_SCHEMA, SignalType, TradeSignal
 from app.sources.base_source import Post
 
 _WHITESPACE_RUN = re.compile(r"\s+")
+_NON_ALPHANUMERIC = re.compile(r"[^a-z0-9]")
+
+
+def _normalize_symbol(text: str) -> str:
+    """Lowercases and strips separators so "EUR/USD", "Eur/usd", "eur usd"
+    and "EURUSD" all compare equal -- the same author spells a pair several
+    different ways from post to post."""
+    return _NON_ALPHANUMERIC.sub("", text.lower())
 
 
 def _normalize_whitespace(text: str) -> str:
@@ -95,14 +103,23 @@ class SignalExtractor:
                     f"invalid_referenced_trade_id: {signal.referenced_trade_id!r} was not one of the given candidates",
                 )
 
-        signal = self._enforce_human_review(signal)
+        signal = self._enforce_human_review(signal, post.text)
         return ExtractionResult(signal, result.request_id, None)
 
-    def _enforce_human_review(self, signal: TradeSignal) -> TradeSignal:
+    def _enforce_human_review(self, signal: TradeSignal, post_text: str) -> TradeSignal:
         stop_loss_auto_fillable = self.missing_stop_loss_behavior == "apply_risk_model"
 
         must_review = signal.requires_human_review
         if signal.confidence < self.min_confidence:
+            must_review = True
+        # Deterministic backstop for prompts.py rule 13's narrow
+        # instrument-inheritance exception: an instrument that doesn't
+        # appear in this post's own text was inherited from surrounding
+        # context rather than stated here, so it goes to a human regardless
+        # of whether the model remembered to declare that in `assumptions`.
+        # Same principle as the verbatim `evidence` check above -- the
+        # model's own account of what it did is never the thing relied on.
+        if signal.instrument and _normalize_symbol(signal.instrument) not in _normalize_symbol(post_text):
             must_review = True
         if signal.signal_type == SignalType.NEW_TRADE and (
             signal.instrument is None

@@ -169,6 +169,49 @@ def test_missing_entry_price_alone_does_not_force_human_review():
     assert result.signal.requires_human_review is False
 
 
+def test_instrument_not_stated_in_post_forces_human_review():
+    # prompts.py rule 13 lets a bare correction ("sry 20 lots short")
+    # inherit the instrument from a post made minutes earlier -- but an
+    # inherited instrument is an inference, not something this post states,
+    # so it must always reach a human. Enforced in code rather than trusting
+    # the model to declare the inheritance in `assumptions`.
+    correction_post = make_post("sry 20 lots short", post_id="post-correction")
+    extractor = _make_extractor(
+        _valid_parsed(
+            post_id="post-correction",
+            instrument="EUR/USD",
+            direction="short",
+            evidence=["sry 20 lots short"],
+            assumptions=["instrument EUR/USD inherited from the author's post 1.7 minutes earlier"],
+            requires_human_review=False,
+        )
+    )
+    result = extractor.extract(correction_post, EMPTY_CONTEXT)
+
+    assert result.accepted
+    assert result.signal.requires_human_review is True
+
+
+def test_instrument_stated_in_post_with_different_spelling_does_not_force_review():
+    # The author spells the same pair several ways ("Eur/usd", "EURUSD",
+    # "eur usd") -- a spelling difference must not be mistaken for an
+    # inherited instrument, or every post would route to human review.
+    post = make_post("Eur/usd sold 2.5 lots at 1.0850, stop 1.0800, target 1.0950", post_id="post-spelling")
+    extractor = _make_extractor(
+        _valid_parsed(
+            post_id="post-spelling",
+            instrument="EURUSD",
+            direction="short",
+            evidence=["Eur/usd sold 2.5 lots at 1.0850"],
+            requires_human_review=False,
+        )
+    )
+    result = extractor.extract(post, EMPTY_CONTEXT)
+
+    assert result.accepted
+    assert result.signal.requires_human_review is False
+
+
 def test_missing_entry_price_alongside_another_missing_field_still_forces_review():
     extractor = _make_extractor(
         _valid_parsed(entry_price=None, missing_fields=["entry_price", "timeframe"], requires_human_review=False)

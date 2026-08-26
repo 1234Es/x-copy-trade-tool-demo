@@ -18,6 +18,16 @@ from app.sources.base_source import Post
 from app.storage.repository import Repository
 
 
+# A bare correction/afterthought post ("sry 20 lots short") may omit the
+# instrument the author named moments earlier. Inheriting an instrument is
+# normally forbidden (proximity is not evidence two posts share a trade --
+# see this module's docstring), so the window allowing it is deliberately
+# tight: minutes, not hours, and only ever as an assumption that forces
+# human review (see prompts.py rule 13 and signal_extractor's
+# instrument-not-in-post check).
+INSTRUMENT_INHERITANCE_WINDOW_MINUTES = 5
+
+
 @dataclass(frozen=True)
 class ContextItem:
     post_id: str
@@ -25,6 +35,7 @@ class ContextItem:
     text: str
     posted_at: datetime
     link_reason: str
+    minutes_before_current_post: float | None = None
 
 
 @dataclass(frozen=True)
@@ -81,6 +92,7 @@ class ContextEngine:
                 text=row["text"],
                 posted_at=row["posted_at"],
                 link_reason="recent post by the same author -- background only, NOT an assumed link to this post's subject",
+                minutes_before_current_post=(post.posted_at - row["posted_at"]).total_seconds() / 60.0,
             )
             for row in self.repository.get_recent_posts_by_author(post.author, before=post.posted_at, limit=max_recent)
         ]
@@ -122,9 +134,18 @@ class ContextEngine:
             for item in context.thread_ancestors:
                 lines.append(f'  [{item.post_id}] @{item.author}: "{item.text}"')
         if context.recent_author_posts:
-            lines.append("RECENT POSTS BY THIS AUTHOR (background only -- do not assume these share a trade with the current post unless the current post's text itself makes the link clear):")
+            lines.append(
+                "RECENT POSTS BY THIS AUTHOR (background only -- do not assume these share a trade with the current "
+                "post unless the current post's text itself makes the link clear; the single narrow exception is "
+                "instrument inheritance, see rule 13):"
+            )
             for item in context.recent_author_posts:
-                lines.append(f'  [{item.post_id}] {item.posted_at.isoformat()}: "{item.text}"')
+                age = (
+                    f" ({item.minutes_before_current_post:.1f} min before this post)"
+                    if item.minutes_before_current_post is not None
+                    else ""
+                )
+                lines.append(f'  [{item.post_id}] {item.posted_at.isoformat()}{age}: "{item.text}"')
         if context.open_signal_candidates:
             lines.append("CANDIDATE OPEN SIGNALS FROM THIS AUTHOR (only use one of these exact signal_ids for referenced_trade_id, and only if the post clearly refers to it):")
             for c in context.open_signal_candidates:

@@ -97,6 +97,15 @@ used as `entry_price` for a new increment -- when the only price given is framed
 (implying a market order at the prevailing price), note it in `assumptions`, and add `"entry_price"` to \
 `missing_fields`. Only use a stated number as `entry_price` when the post frames it as this specific update's own \
 fill or order price.
+13. NARROW EXCEPTION to rule 3's "never infer the instrument": a short correction or afterthought post that states \
+a direction and size but no instrument (e.g. "sry 20 lots short", "make that 15 not 20") MAY inherit the instrument \
+from a recent post by the same author, but ONLY when ALL of these hold: (a) that post is labelled in context as \
+LESS THAN 5 MINUTES before this one, (b) it names exactly one instrument -- if two or more recent posts name \
+DIFFERENT instruments, or any single one names multiple, infer nothing, (c) nothing in the current post suggests a \
+different market. When you do inherit, you MUST say so plainly in `assumptions` (e.g. "instrument EUR/USD inherited \
+from the author's post 1.7 minutes earlier; not stated in this post") and lower `confidence` accordingly. If any \
+condition is unmet, `instrument` stays null with a `missing_fields` note, exactly as rule 3 requires. Inheriting is \
+never permitted from a post older than the stated window, however obvious the link may seem.
 
 You will be given: the post text, thread/reply context if available, recent posts by the same author, currently \
 open signals from this author (with their IDs, for `referenced_trade_id` resolution), and a confirmed \
