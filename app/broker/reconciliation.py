@@ -35,9 +35,12 @@ class ReconciliationSummary:
     closed_synced: list[str] = field(default_factory=list)
     unexplained: list[str] = field(default_factory=list)
     open_at_broker_not_local: list[str] = field(default_factory=list)
+    adopted_from_resting_order: list[str] = field(default_factory=list)
 
     @property
     def has_unexplained_mismatch(self) -> bool:
+        # An adopted trade is explained -- we placed the order that became
+        # it -- so it deliberately doesn't count here.
         return bool(self.unexplained or self.open_at_broker_not_local)
 
 
@@ -48,14 +51,30 @@ class Reconciler:
 
     def reconcile(self, risk_manager: RiskManager | None = None, now: datetime | None = None) -> ReconciliationSummary:
         now = now or datetime.now(timezone.utc)
-        broker_trade_ids = {t["id"] for t in self.broker.get_open_trades()}
+        broker_trades = self.broker.get_open_trades()
+        broker_by_id = {t["id"]: t for t in broker_trades}
+        broker_trade_ids = set(broker_by_id)
         local_open = self.repository.get_open_trades()
         local_by_id = {t["oanda_trade_id"]: t for t in local_open}
         local_trade_ids = set(local_by_id)
 
-        summary = ReconciliationSummary(
-            open_at_broker_not_local=sorted(broker_trade_ids - local_trade_ids)
-        )
+        summary = ReconciliationSummary()
+        # A trade the broker has and we don't is not automatically a
+        # mystery: a resting limit/stop order we placed becomes a trade
+        # whenever its level is hit, with no call of ours to hang the
+        # bookkeeping off. Claim those against the order that produced them
+        # before treating anything as an unexplained mismatch -- otherwise
+        # every limit order that fills halts trading (see chat log
+        # 2026-08-26, trade 653).
+        unclaimed_orders = self.repository.get_orders_without_trades()
+        for trade_id in sorted(broker_trade_ids - local_trade_ids):
+            order = self._match_resting_order(broker_by_id[trade_id], unclaimed_orders)
+            if order is None:
+                summary.open_at_broker_not_local.append(trade_id)
+                continue
+            self._record_adopted_trade(trade_id, broker_by_id[trade_id], order)
+            unclaimed_orders.remove(order)
+            summary.adopted_from_resting_order.append(trade_id)
 
         for trade_id in sorted(local_trade_ids - broker_trade_ids):
             trade = self.broker.get_trade(trade_id)
@@ -102,6 +121,46 @@ class Reconciler:
                 )
 
         return summary
+
+    @staticmethod
+    def _match_resting_order(broker_trade: dict, unclaimed_orders: list[dict]) -> dict | None:
+        """The order that became this trade, or None if we didn't place it.
+
+        Matched on instrument AND exact signed units: units are computed by
+        position sizing to a specific integer, so an accidental match with an
+        unrelated position placed by hand in the OANDA UI is implausible
+        without it having the identical instrument and size. Deliberately
+        strict -- adopting the wrong trade would attribute a position to a
+        signal that didn't produce it, and silently satisfy a reconciliation
+        check that exists precisely to catch that. When in doubt this
+        returns None and the trade is reported as a mismatch, which is the
+        safe direction.
+        """
+        try:
+            units = int(float(broker_trade["currentUnits"]))
+        except (KeyError, TypeError, ValueError):
+            return None
+        instrument = broker_trade.get("instrument")
+        for order in unclaimed_orders:
+            if order["instrument"] == instrument and order["units"] == units:
+                return order
+        return None
+
+    def _record_adopted_trade(self, trade_id: str, broker_trade: dict, order: dict) -> None:
+        self.repository.insert_trade(
+            {
+                "oanda_trade_id": trade_id,
+                "order_id": order["order_id"],
+                "instrument": order["instrument"],
+                "direction": "long" if order["units"] > 0 else "short",
+                "open_price": float(broker_trade["price"]) if broker_trade.get("price") else None,
+                "close_price": None,
+                "open_time": _parse_oanda_time(broker_trade["openTime"]) if broker_trade.get("openTime") else None,
+                "close_time": None,
+                "realized_pl": None,
+                "exit_reason": None,
+            }
+        )
 
     def _resolve_exit_reason(self, trade: dict) -> str:
         closing_ids = trade.get("closingTransactionIDs") or []

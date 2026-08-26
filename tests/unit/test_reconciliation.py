@@ -134,6 +134,112 @@ def test_reconcile_flags_trade_open_at_broker_but_unknown_locally(repository):
     assert summary.has_unexplained_mismatch
 
 
+def _seed_resting_order(repository: Repository, order_id: str = "o-resting", units: int = -21092) -> None:
+    """An order accepted by the broker that produced no trade row -- what a
+    resting limit/stop order looks like locally until its level is hit."""
+    repository.insert_order(
+        {
+            "order_id": order_id, "signal_id": f"s-{order_id}", "oanda_order_id": "ord-1",
+            "instrument": "EUR_USD", "units": units, "status": "filled",
+            "submitted_at": NOW, "broker_response_json": "{}",
+        }
+    )
+
+
+def test_trade_from_a_resting_order_is_adopted_not_flagged(repository):
+    # Regression: a limit order rests, so submit_order returns success with
+    # no trade id and order_manager writes no trade row. Whenever the level
+    # is hit the broker has a position we've no record of -- which halted
+    # trading as an unexplained mismatch, even though we placed the order
+    # that became it. Seen live as trade 653.
+    _seed_resting_order(repository)
+    broker = MagicMock()
+    broker.get_open_trades.return_value = [
+        {"id": "653", "instrument": "EUR_USD", "currentUnits": "-21092", "price": "1.16530",
+         "openTime": "2026-08-26T15:46:42.031931958Z"}
+    ]
+    reconciler = Reconciler(broker, repository)
+    rm = _risk_manager()
+
+    summary = reconciler.reconcile(risk_manager=rm, now=NOW)
+
+    assert summary.adopted_from_resting_order == ["653"]
+    assert not summary.has_unexplained_mismatch
+    assert not rm.circuit_breaker.is_tripped(NOW)
+
+    trades = repository.get_open_trades()
+    assert len(trades) == 1
+    assert trades[0]["oanda_trade_id"] == "653"
+    assert trades[0]["open_price"] == 1.16530
+    assert trades[0]["direction"] == "short"
+
+
+def test_adopted_resting_trade_keeps_its_source_attribution(repository):
+    _seed_resting_order(repository)
+    repository.insert_signal(
+        {
+            "signal_id": "s-o-resting", "post_id": "p1", "author": "waltervannelli", "signal_type": "new_trade",
+            "instrument": "EUR_USD", "direction": "short", "order_type": "limit", "entry_price": 1.1653,
+            "entry_zone_low": None, "entry_zone_high": None, "stop_loss": None, "take_profit_json": "[]",
+            "timeframe": None, "valid_until": None, "referenced_trade_id": None, "confidence": 0.9,
+            "evidence_json": "[]", "assumptions_json": "[]", "missing_fields_json": "[]",
+            "requires_human_review": False, "reasoning_summary": None, "openai_request_id": None,
+            "validation_status": "approved", "rejection_reason": None, "created_at": NOW,
+        }
+    )
+    broker = MagicMock()
+    broker.get_open_trades.return_value = [
+        {"id": "653", "instrument": "EUR_USD", "currentUnits": "-21092", "price": "1.16530",
+         "openTime": "2026-08-26T15:46:42Z"}
+    ]
+
+    Reconciler(broker, repository).reconcile(now=NOW)
+
+    # Adoption must join back through the real order, or the position is
+    # exempt from per-source-account risk limits.
+    positions = repository.get_open_trades_with_source()
+    assert positions[0]["source_account"] == "waltervannelli"
+
+
+def test_unmatched_broker_trade_is_still_flagged(repository):
+    # A position opened by hand in OANDA's UI matches no order of ours and
+    # must still halt trading -- adoption is for trades we caused, and must
+    # not become a way to silently absorb anything the broker reports.
+    _seed_resting_order(repository, units=-21092)
+    broker = MagicMock()
+    broker.get_open_trades.return_value = [
+        {"id": "999", "instrument": "GBP_USD", "currentUnits": "-5000", "price": "1.2650",
+         "openTime": "2026-08-26T15:46:42Z"}
+    ]
+    reconciler = Reconciler(broker, repository)
+    rm = _risk_manager()
+
+    summary = reconciler.reconcile(risk_manager=rm, now=NOW)
+
+    assert summary.open_at_broker_not_local == ["999"]
+    assert not summary.adopted_from_resting_order
+    assert rm.circuit_breaker.is_tripped(NOW)
+
+
+def test_one_resting_order_is_only_claimed_once(repository):
+    # Two identical broker trades must not both match the single order that
+    # could explain one of them.
+    _seed_resting_order(repository)
+    broker = MagicMock()
+    broker.get_open_trades.return_value = [
+        {"id": "653", "instrument": "EUR_USD", "currentUnits": "-21092", "price": "1.16530",
+         "openTime": "2026-08-26T15:46:42Z"},
+        {"id": "654", "instrument": "EUR_USD", "currentUnits": "-21092", "price": "1.16540",
+         "openTime": "2026-08-26T15:47:42Z"},
+    ]
+    reconciler = Reconciler(broker, repository)
+
+    summary = reconciler.reconcile(now=NOW)
+
+    assert summary.adopted_from_resting_order == ["653"]
+    assert summary.open_at_broker_not_local == ["654"]
+
+
 def test_unexplained_mismatch_actually_trips_the_circuit_breaker(repository):
     # Regression: reconcile() recorded a mismatch to two DB tables but never
     # tripped the breaker itself, so trading continued while local and

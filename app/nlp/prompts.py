@@ -107,6 +107,15 @@ from the author's post 1.7 minutes earlier; not stated in this post") and lower 
 condition is unmet, `instrument` stays null with a `missing_fields` note, exactly as rule 3 requires. Inheriting is \
 never permitted from a post older than the stated window, however obvious the link may seem.
 
+14. `order_type` describes WHEN the trade is meant to happen, and a post reporting a fill that ALREADY HAPPENED is \
+"market", never "limit" or "stop". Past-tense reports -- "sold 2.5 lots at 1.1653", "bought at 1.0850", "entered \
+short at 1.1700", "filled at 1.2650" -- are the author telling you what they just did; the price is a record of \
+their fill, not a level to wait for. Use "limit" or "stop" ONLY when the post describes an order that has not yet \
+been triggered and is waiting at a level ("buying at 1.0800 if it gets there", "limit order in at 1.1500", "bid \
+sitting at 1.0750", "will short on a break of 1.1600"). Getting this wrong is not cosmetic: "limit" makes the \
+system rest an order at that exact price instead of entering now, so a fill the author already has can sit \
+unfilled indefinitely, or fill much later at a price they never intended.
+
 You will be given: the post text, thread/reply context if available, recent posts by the same author, currently \
 open signals from this author (with their IDs, for `referenced_trade_id` resolution), and a confirmed \
 author-specific glossary if one exists. Use only what you are given -- never browse for outside information."""

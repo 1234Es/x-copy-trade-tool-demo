@@ -81,6 +81,12 @@ def _reconciliation_loop(context) -> None:  # noqa: ANN001
             summary = context.reconciler.reconcile(risk_manager=context.risk_manager)
             for trade_id in summary.closed_synced:
                 log.info("trade_closed_synced", oanda_trade_id=trade_id)
+            for trade_id in summary.adopted_from_resting_order:
+                # A resting limit/stop order filling is the one way a
+                # position appears without a call of ours, so this is the
+                # only place it gets recorded -- worth its own line rather
+                # than appearing as a silent row.
+                log.info("resting_order_filled_trade_adopted", oanda_trade_id=trade_id)
             if summary.has_unexplained_mismatch:
                 log.error(
                     "reconciliation_mismatch",

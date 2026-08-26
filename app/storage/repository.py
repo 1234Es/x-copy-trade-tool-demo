@@ -286,6 +286,27 @@ class Repository:
             ).mappings().all()
             return [_row_to_dict(r) for r in rows]
 
+    def get_orders_without_trades(self) -> list[dict[str, Any]]:
+        """Orders we submitted that never produced a trade row.
+
+        Normally empty: a market order fills on submission and
+        order_manager writes the trade immediately. A resting limit/stop
+        order is the exception -- it is accepted with no trade attached, and
+        the trade only comes into existence whenever the level is hit, which
+        may be minutes or days later and involves no call of ours. These are
+        the candidates the reconciler matches an otherwise-unknown broker
+        trade against (see broker/reconciliation.py) rather than reporting a
+        position the system itself opened as an unexplained mismatch.
+        """
+        with self.engine.connect() as conn:
+            rows = conn.execute(
+                select(orders)
+                .outerjoin(trades, trades.c.order_id == orders.c.order_id)
+                .where(trades.c.oanda_trade_id.is_(None), orders.c.status == "filled")
+                .order_by(orders.c.submitted_at)
+            ).mappings().all()
+            return [_row_to_dict(r) for r in rows]
+
     def get_open_trade_for_signal(self, signal_id: str) -> dict[str, Any] | None:
         """The still-open trade produced by a given signal_id, if any --
         resolves a close/stop-move/target-move signal's `referenced_trade_id`
