@@ -85,6 +85,21 @@ class Reconciler:
                 now, {"local_trade_ids": sorted(local_trade_ids)}, {"broker_trade_ids": sorted(broker_trade_ids)}, discrepancy
             )
             self.repository.insert_circuit_breaker_event("reconciliation_failure", discrepancy, now)
+            # Actually halt trading, not just write a row about it. These two
+            # repository calls only record that a mismatch happened -- for a
+            # long time nothing tripped the breaker itself, so a dashboard
+            # showing "circuit breaker: clear" was not evidence local and
+            # broker state agreed, and the system would happily keep opening
+            # new positions while its own view of the account was known-wrong
+            # (DESIGN.md Section 5: "auto-shutdown after reconciliation
+            # failure"). No cooldown -- an operator must look at the account
+            # and clear this deliberately.
+            if risk_manager is not None:
+                risk_manager.record_reconciliation_mismatch(
+                    now,
+                    f"open_at_broker_not_local={summary.open_at_broker_not_local or 'none'}; "
+                    f"unexplained_locally_not_broker={summary.unexplained or 'none'}",
+                )
 
         return summary
 

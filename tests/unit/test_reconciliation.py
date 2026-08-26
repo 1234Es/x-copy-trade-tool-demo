@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from app.broker.reconciliation import Reconciler
-from app.risk.circuit_breaker import CircuitBreaker
+from app.risk.circuit_breaker import CircuitBreaker, TripReason
 from app.risk.risk_manager import RiskManager
 from app.storage.database import create_db_engine
 from app.storage.repository import Repository
@@ -132,6 +132,39 @@ def test_reconcile_flags_trade_open_at_broker_but_unknown_locally(repository):
 
     assert summary.open_at_broker_not_local == ["mystery-trade"]
     assert summary.has_unexplained_mismatch
+
+
+def test_unexplained_mismatch_actually_trips_the_circuit_breaker(repository):
+    # Regression: reconcile() recorded a mismatch to two DB tables but never
+    # tripped the breaker itself, so trading continued while local and
+    # broker state were known to disagree -- and the dashboard still showed
+    # "circuit breaker: clear". RiskManager.record_reconciliation_mismatch()
+    # existed for exactly this and was simply never called by anything.
+    broker = MagicMock()
+    broker.get_open_trades.return_value = [{"id": "mystery-trade"}]
+    reconciler = Reconciler(broker, repository)
+    rm = _risk_manager()
+
+    reconciler.reconcile(risk_manager=rm, now=NOW)
+
+    assert rm.circuit_breaker.is_tripped(NOW)
+    assert TripReason.RECONCILIATION_MISMATCH in rm.circuit_breaker.active_reasons(NOW)
+    # No cooldown: an operator must inspect the account and clear it.
+    event = next(e for e in rm.circuit_breaker.active_events(NOW) if e.reason == TripReason.RECONCILIATION_MISMATCH)
+    assert event.clears_at is None
+    assert "mystery-trade" in event.details
+
+
+def test_matching_state_never_trips_the_circuit_breaker(repository):
+    _seed_open_trade(repository)
+    broker = MagicMock()
+    broker.get_open_trades.return_value = [{"id": "t1"}]
+    reconciler = Reconciler(broker, repository)
+    rm = _risk_manager()
+
+    reconciler.reconcile(risk_manager=rm, now=NOW)
+
+    assert not rm.circuit_breaker.is_tripped(NOW)
 
 
 def test_reconcile_handles_multiple_trades_independently(repository):
