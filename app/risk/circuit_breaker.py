@@ -34,6 +34,23 @@ class CircuitBreaker:
         self._history: list[CircuitBreakerEvent] = []
 
     def trip(self, reason: TripReason, now: datetime, cooldown: timedelta | None, details: str = "") -> CircuitBreakerEvent:
+        self._expire(now)
+        if cooldown is None:
+            # A manual-clear trip is a latch, not a counter: while one is
+            # already active for this reason, tripping again changes nothing
+            # about whether trading is halted. Callers fire repeatedly from
+            # polling loops (the reconciler re-checks every 30s, and
+            # record_api_error re-trips on every failed poll), so without
+            # this the active list grew unboundedly -- 40 identical
+            # reconciliation_mismatch entries in 20 minutes, all of one
+            # underlying problem, bloating /api/status and burying the
+            # original trip time. The first event is returned unchanged so
+            # "tripped_at" keeps saying when the condition ACTUALLY started.
+            # Cooldown-bearing trips are exempt: re-tripping those
+            # deliberately extends the window (see consecutive-losses).
+            for existing in self._active_trips:
+                if existing.reason == reason and existing.clears_at is None:
+                    return existing
         clears_at = now + cooldown if cooldown is not None else None
         event = CircuitBreakerEvent(reason=reason, tripped_at=now, clears_at=clears_at, details=details)
         self._active_trips.append(event)
