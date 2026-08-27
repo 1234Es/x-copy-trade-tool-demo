@@ -7,7 +7,13 @@ tracked_accounts:
 - username: waltervannelli
   profile_url: https://x.com/waltervannelli
   enabled: true
-  max_open_positions_from_account: 2
+  # Raised from 2 on 2026-08-27: this account scales into a position over
+  # many posts ("tot. exp 22.5 lots"), and each add is submitted as its own
+  # independent trade, so a cap of 2 rejected his third add onward as
+  # source_account_exposure_limit_reached. 5 matches risk.yaml's global
+  # max_open_positions -- past that the exposure caps bind anyway, so a
+  # higher number here would have no effect without raising those too.
+  max_open_positions_from_account: 5
 - username: trynahustle
   profile_url: https://x.com/TrynaHustle
   enabled: true
