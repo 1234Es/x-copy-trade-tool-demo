@@ -169,6 +169,80 @@ def test_consecutive_losses_trip_circuit_breaker():
     assert decision.reason == "consecutive_loss_cooldown_triggered"
 
 
+def _halted_by_consecutive_losses(config=None):
+    """A risk manager that has just hit its consecutive-loss limit, with the
+    halt imposed and the circuit breaker tripped."""
+    config = config or dict(BASE_CONFIG)
+    config["max_consecutive_losses"] = 2
+    config["cooldown_after_loss_minutes"] = 0
+    rm = _risk_manager(config)
+    rm.record_trade_closed("EUR_USD", pnl=-10.0, now=NOW)
+    rm.record_trade_closed("GBP_USD", pnl=-10.0, now=NOW)
+    first = rm.evaluate_trade("USD_JPY", "waltervannelli", 0.0010, 0.0020, 1.0, 1.0850, _account_state(), NOW)
+    assert first.reason == "consecutive_loss_cooldown_triggered"
+    return rm
+
+
+def test_consecutive_loss_halt_lifts_once_the_cooldown_elapses():
+    # Regression: the streak counter was ONLY cleared by a winning trade,
+    # but no trade could open while halted, so none could close, so the
+    # counter never fell and every later signal re-tripped the breaker. The
+    # "cooldown" was a permanent halt nothing could lift -- it bricked live
+    # trading from 2026-09-02 to 2026-09-07.
+    rm = _halted_by_consecutive_losses()
+
+    after_cooldown = NOW + timedelta(minutes=121)
+    decision = rm.evaluate_trade(
+        "USD_JPY", "waltervannelli", 0.0010, 0.0020, 1.0, 1.0850, _account_state(), after_cooldown
+    )
+
+    assert decision.approved
+    assert rm._consecutive_losses == 0
+
+
+def test_consecutive_loss_halt_still_blocks_during_the_cooldown():
+    rm = _halted_by_consecutive_losses()
+
+    during = NOW + timedelta(minutes=30)
+    decision = rm.evaluate_trade("USD_JPY", "waltervannelli", 0.0010, 0.0020, 1.0, 1.0850, _account_state(), during)
+
+    assert not decision.approved
+    assert decision.reason == "circuit_breaker_tripped:consecutive_losses"
+
+
+def test_operator_clearing_the_breaker_lifts_the_halt():
+    # An operator clearing the circuit breaker must actually resume trading.
+    # Keying the reset off the breaker's own state (rather than a separate
+    # internal timer) means a deliberate manual clear isn't silently
+    # overridden by bookkeeping the operator can't see.
+    rm = _halted_by_consecutive_losses()
+    rm.circuit_breaker.manual_clear()
+
+    soon = NOW + timedelta(minutes=1)
+    decision = rm.evaluate_trade("USD_JPY", "waltervannelli", 0.0010, 0.0020, 1.0, 1.0850, _account_state(), soon)
+
+    assert decision.approved
+    assert rm._consecutive_losses == 0
+
+
+def test_a_win_ends_the_streak_and_the_halt_together():
+    rm = _halted_by_consecutive_losses()
+    rm.record_trade_closed("EUR_USD", pnl=25.0, now=NOW)
+    rm.circuit_breaker.manual_clear()
+
+    assert rm._consecutive_losses == 0
+    assert not rm._consecutive_loss_halt_active
+    # And a fresh streak must earn its own halt rather than inheriting the
+    # spent one.
+    rm.record_trade_closed("EUR_USD", pnl=-10.0, now=NOW)
+    rm.record_trade_closed("GBP_USD", pnl=-10.0, now=NOW)
+    decision = rm.evaluate_trade(
+        "USD_JPY", "waltervannelli", 0.0010, 0.0020, 1.0, 1.0850, _account_state(), NOW + timedelta(minutes=2)
+    )
+    assert not decision.approved
+    assert decision.reason == "consecutive_loss_cooldown_triggered"
+
+
 def test_max_trades_per_hour():
     config = dict(BASE_CONFIG)
     config["max_trades_per_hour"] = 1

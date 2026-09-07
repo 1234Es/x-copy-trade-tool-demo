@@ -41,6 +41,10 @@ class RiskManager:
         self.circuit_breaker = circuit_breaker
         self._trade_timestamps: list[datetime] = []
         self._consecutive_losses = 0
+        # True once a consecutive-loss halt has been imposed and not yet
+        # served. Distinguishes "just hit the limit, halt now" from "the
+        # halt is over" -- see evaluate_trade.
+        self._consecutive_loss_halt_active = False
         self._last_loss_time_by_instrument: dict[str, datetime] = {}
         self._api_error_timestamps: list[datetime] = []
         self._consecutive_order_rejections = 0
@@ -124,12 +128,30 @@ class RiskManager:
                 return RiskDecision(False, "cooldown_after_loss_active")
 
         if self._consecutive_losses >= self.config["max_consecutive_losses"]:
-            self.circuit_breaker.trip(
-                TripReason.CONSECUTIVE_LOSSES, now,
-                cooldown=timedelta(minutes=self.config.get("cooldown_after_consecutive_losses_minutes", 120)),
-                details=f"{self._consecutive_losses} consecutive losses",
-            )
-            return RiskDecision(False, "consecutive_loss_cooldown_triggered")
+            # Reaching this line means NO circuit-breaker trip is currently
+            # active -- the check at the top of this method returns first if
+            # one is. So if a halt was already imposed for this streak, it
+            # has since been served: either the cooldown elapsed or an
+            # operator cleared the breaker deliberately.
+            #
+            # The streak must then be reset, not merely allowed past. The
+            # counter is only otherwise cleared by record_trade_closed() on
+            # a winning trade -- but no trade can close while none can open,
+            # so re-tripping here made the "cooldown" a permanent halt that
+            # nothing could lift. That bricked live trading from 2026-09-02
+            # (three correlated EUR_USD shorts stopped out by one move) until
+            # 2026-09-07, rejecting every signal in between.
+            if self._consecutive_loss_halt_active:
+                self._consecutive_losses = 0
+                self._consecutive_loss_halt_active = False
+            else:
+                self._consecutive_loss_halt_active = True
+                self.circuit_breaker.trip(
+                    TripReason.CONSECUTIVE_LOSSES, now,
+                    cooldown=timedelta(minutes=self.config.get("cooldown_after_consecutive_losses_minutes", 120)),
+                    details=f"{self._consecutive_losses} consecutive losses",
+                )
+                return RiskDecision(False, "consecutive_loss_cooldown_triggered")
 
         self._prune_trade_timestamps(now)
         trades_last_hour = sum(1 for t in self._trade_timestamps if now - t <= timedelta(hours=1))
@@ -163,6 +185,9 @@ class RiskManager:
             self._last_loss_time_by_instrument[instrument] = now
         else:
             self._consecutive_losses = 0
+            # A win ends the streak outright, so any halt imposed for it is
+            # moot -- the next streak starts a fresh one.
+            self._consecutive_loss_halt_active = False
 
     def record_api_error(self, now: datetime) -> bool:
         self._api_error_timestamps.append(now)
