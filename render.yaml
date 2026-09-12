@@ -19,8 +19,24 @@ services:
     plan: free
     dockerfilePath: ./Dockerfile
     envVars:
+      # Set in the Render dashboard, not here -- the dashboard value is
+      # authoritative and this service runs practice_auto in production.
+      # Declaring `value: observe` here was actively misleading in two ways:
+      # anyone reading this file to understand the deployment concluded the
+      # system never places orders, and a blueprint re-sync would have
+      # silently flipped the live service back to observe, stopping it
+      # trading with no other signal. `sync: false` is safe because the
+      # application itself already defaults to observe when APP_MODE is
+      # unset (app/config/settings.py), so a fresh deploy that hasn't had
+      # the value supplied yet is still the conservative mode, not an
+      # accidentally-autonomous one.
       - key: APP_MODE
-        value: observe
+        sync: false
+      # Deliberately still hardcoded, unlike APP_MODE above: this is a
+      # safety constraint the blueprint SHOULD assert rather than delegate,
+      # it has never been overridden, and the broker layer refuses anything
+      # but "practice" anyway (OandaPracticeBroker raises
+      # LiveTradingNotSupportedError).
       - key: OANDA_ENVIRONMENT
         value: practice
       - key: DATABASE_URL

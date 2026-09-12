@@ -395,3 +395,19 @@ submission) behind a password, enforced server-side by middleware rather
 than by hiding a button. Public visitors get full read access to every
 dashboard tab; nothing about the pipeline itself changes based on who's
 looking at it.
+
+**The public deployment runs `APP_MODE=practice_auto`, not the `observe`
+default this document describes elsewhere** -- it executes signals against
+the OANDA practice account autonomously, with no per-trade human click. That
+value is set in the Render dashboard, which is authoritative for it;
+`render.yaml` deliberately declares `APP_MODE` as `sync: false` rather than
+asserting a value, because hardcoding `observe` there both misdescribed the
+running system and meant a blueprint re-sync could silently flip it back and
+stop it trading. Note what does NOT change in this mode: every validation
+rule and every risk check in Sections 5-6 still applies identically, since
+mode is read at exactly one gate (`app/execution/approval_workflow.py`).
+`OANDA_ENVIRONMENT` stays hardcoded to `practice` in the blueprint on
+purpose -- that one is a constraint the deployment config should assert, not
+delegate. If `APP_MODE` is unset entirely, `app/config/settings.py` falls
+back to `observe`, so an incompletely-configured deploy is conservative
+rather than accidentally autonomous.
