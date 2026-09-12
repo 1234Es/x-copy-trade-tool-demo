@@ -95,9 +95,11 @@ Then open http://127.0.0.1:8000 in a browser.
 ```bash
 pytest
 ```
-72 unit/integration tests with OpenAI and OANDA both mocked — no real
+179 unit/integration tests with OpenAI and OANDA both mocked — no real
 network calls happen during the test suite, and no order is ever submitted
-during tests.
+during tests. Run them before changing anything in `app/risk/` or
+`app/execution/`; most of the suite exists because of a real failure
+(see the git log), not for coverage's sake.
 
 ## 3. Obtaining and configuring permitted API credentials
 

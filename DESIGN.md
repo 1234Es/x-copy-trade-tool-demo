@@ -25,7 +25,7 @@ implementation follows, not a proposal awaiting sign-off.
   are only validated against English text. A post detected as non-English is
   routed to `too_ambiguous_to_classify` rather than guessed at.
 - **Replies / reposts / quote posts / images:** replies and quote posts are
-  ingested with their parent/quoted context recorded (Section 5 context
+  ingested with their parent/quoted context recorded (Section 3's context
   engine) since they often carry the actual trade update. Pure reposts
   (no added commentary) are recorded but never treated as an independent
   signal — only the original post can be. Images are recorded as metadata
@@ -40,7 +40,7 @@ implementation follows, not a proposal awaiting sign-off.
   dashboard for manual action.
 - **Partial trade details inferred from earlier posts:** allowed **only**
   for explicitly-linked follow-ups (a reply to, or clear textual reference
-  to, an existing tracked signal — see Section 5). Never inferred from mere
+  to, an existing tracked signal — see Section 3). Never inferred from mere
   recency or topical similarity.
 - **Hosting:** started as a local-machine tool; now also runs as a public,
   operator-gated deployment (see the README's "Live" section).
@@ -258,20 +258,50 @@ Two behavioral rules enforced in code, not just prompted for:
 
 ---
 
-## 5. Conservative risk settings
+## 5. Risk settings
 
-Starting risk defaults, with rationale for each (all overridable in
-`app/config/`):
+> **`app/config/risk.yaml` is the single source of truth for every number in
+> this section, and it is the file the running system actually loads.** It
+> holds the current value of each setting plus, inline, the specific incident
+> that produced it. This section explains the *shape* of the risk model and
+> records how the original starting values moved. If the two ever disagree,
+> `risk.yaml` is right.
+>
+> They have disagreed before. This table sat at its July starting values
+> while production ran at roughly double them, which left the document a
+> reader is pointed to for the risk posture understating it materially while
+> presenting itself as current. Do not re-introduce that by editing a value
+> here and not there.
 
-| Setting | Default | Why |
-|---|---|---|
-| `risk_per_trade_percent` | 0.25% | Lower than the related TA-bot project's 0.5% — signal quality here depends on a third party's judgment plus an LLM's interpretation of it, two additional sources of error beyond a self-contained technical rule, so size down accordingly. |
-| `max_daily_loss_percent` | 1.0% | Tight, matching an "err toward no trade" posture. |
-| `max_weekly_loss_percent` | 2.5% | |
-| `max_open_positions` | 2 | Copy-trading one account shouldn't need much concurrent exposure; keeps correlated-signal risk bounded. |
-| `max_trades_per_day` | 5 | A real trader posting actionable signals more than ~5x/day would be unusual; a higher rate is more likely a pipeline bug or a source flooding low-quality posts. |
-| `minimum_reward_to_risk` | 1.5 | Same floor as the related project — reject trades whose stated target doesn't clear this even if every other check passes. |
-| `require_stop_loss` | true | Non-negotiable: no order is ever submitted without a real, computed protective stop. By default (`missing_stop_loss_behavior: human_review`) a post lacking one routes to human review. Optionally (`missing_stop_loss_behavior: apply_risk_model`, deliberately enabled per-deployment) a missing stop/target is instead computed from `fallback_stop_distance_pips` (per instrument, pips) and `fallback_reward_to_risk_multiple` — for accounts whose author never states a stop/target in text but whose direction and entry are otherwise trusted. This changes *where the stop comes from*, never *whether one is attached*. |
+All settings are overridable in `app/config/`. "Starting value" is the
+original conservative guess from 2026-07; "current" is what `risk.yaml`
+holds today.
+
+| Setting | Starting value | Current | Why it is where it is |
+|---|---|---|---|
+| `risk_per_trade_percent` | 0.25% | **0.5** | Originally set below the related TA-bot project's 0.5% because signal quality here depends on a third party's judgment *plus* an LLM's interpretation of it — two sources of error beyond a self-contained technical rule. Raised once the pipeline's own rejection gates (verbatim evidence, recomputed review flag, deterministic validation) were carrying real load rather than being aspirational. |
+| `max_position_margin_percent` | — (did not exist) | **8** | Added after a real incident: risk-based sizing alone, at `risk_per_trade_percent=5` with a 20-pip EUR_USD fallback stop, produced a position consuming **~71% of equity in margin**. A tight stop makes risk-based sizing produce an arbitrarily leveraged position for the same cash risk, so margin is now capped independently of the risk math. Clamps units down rather than rejecting the trade. |
+| `max_daily_loss_percent` | 1.0% | **3** | Rescaled alongside `risk_per_trade_percent` and `max_open_positions`; at 1.0% a single cluster of correlated positions halted the whole day. |
+| `max_weekly_loss_percent` | 2.5% | **6.5** | Same rescaling. |
+| `max_consecutive_losses` | — | **3** | Trips a manual-clear halt. The streak counter had a deadlock bug that froze trading for five days (2026-09-02 to 09-07): only a winning trade cleared it, and no trade could open to produce one. Fixed by keying the reset off the breaker's own state instead of a separate counter. Open design question, deliberately not closed: three positions killed by one price move still count as three losses. |
+| `max_open_positions` | 2 | **5** | Raised 2026-07-20. The cap of 2 was fully occupied by two slow-moving EUR_USD positions for days, silently blocking every other signal (gold included) regardless of quality. |
+| `max_total_exposure_percent`, `max_exposure_per_instrument_percent`, `max_exposure_per_source_account_percent` | 30 (against a comment that said 10) | **2.7** each | Expressed as summed risk %, not margin %. Sized deliberately as `max_open_positions` (5) x `risk_per_trade_percent` (0.5) = 2.5, plus a small buffer. At 30 they were not a real constraint at all. **Revisit these together with those two settings** — change either and these stop binding. |
+| `max_trades_per_hour` / `max_trades_per_day` | — / 5 | **3** / **8** | A source posting actionable signals far above this rate is more likely a pipeline bug, or an account flooding low-quality posts, than a run of genuine opportunities. |
+| `cooldown_after_loss_minutes` | — | **30** | |
+| `minimum_reward_to_risk` | 1.5 | **1.5** | Unchanged. Rejects a trade whose stated target doesn't clear this even if every other check passes. **Caveat learned in practice:** this is an *entry* filter only. Realized reward-to-risk has come out near 1:1, because `full_close` instructions from the source account close winners well before target. Following someone else's exits caps realized R:R regardless of what this setting demands at entry — enforcing 1.5 here does not mean the system is running a 1.5 R:R strategy. |
+| `require_stop_loss` | true | **true** | Non-negotiable: no order is ever submitted without a real protective stop. |
+| `missing_stop_loss_behavior` | `human_review` | **`apply_risk_model`** | Switched deliberately, per-deployment, for accounts whose author never states a stop or target in text (e.g. "rolling in o/n 10 lots short at the average 1.11407" — a real position update with no risk parameters attached) but whose direction is otherwise clear. A missing stop is then computed from `fallback_stop_distance_pips` and a missing target from `fallback_reward_to_risk_multiple` x that distance. This changes *where the stop comes from*, never *whether one is attached*. Disclosed in README section 7; grep `logs/app.log` for `fallback_risk_model_applied` to see exactly when it fired. |
+
+**Per-instrument thresholds are scale-sensitive, and getting one wrong fails
+silently.** Two real cases, both recorded in `risk.yaml`'s own comments:
+`max_spread_pips.XAU_USD` was 0.5 against gold's real ~75-pip top-of-book
+spread at this account's 0.01 pip size, so gold had never once passed the
+spread check; and `fallback_stop_distance_pips.XAU_USD` was 40 (= $0.40),
+tighter than gold's own bid/ask, so every fallback-stop gold order was
+cancelled by OANDA on fill (`STOP_LOSS_ON_FILL_LOSS`) before a position
+could open. Neither produced an error anyone would notice — just an
+instrument that quietly never traded. Check any new instrument's thresholds
+against its live spread, at its own pip size, before trusting them.
 
 Additional controls beyond this starter set: max exposure per instrument,
 max exposure per source account (relevant once more than one account is
@@ -340,7 +370,7 @@ switching modes can't accidentally bypass a validation or risk rule.
   realized_pl, exit_reason.
 - `author_glossary` — author, term, meaning, confirmed_by_human,
   confirmed_at (a human-confirmed-only glossary of author-specific
-  shorthand — see Section 5).
+  shorthand — see README section 7).
 - `instrument_aliases` — alias (e.g. "gold", "$DXY"), oanda_instrument,
   notes.
 - `circuit_breaker_events`, `reconciliation_log`, `account_snapshots` —
