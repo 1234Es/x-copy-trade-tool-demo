@@ -14,7 +14,3 @@ tracked_accounts:
   # max_open_positions -- past that the exposure caps bind anyway, so a
   # higher number here would have no effect without raising those too.
   max_open_positions_from_account: 5
-- username: trynahustle
-  profile_url: https://x.com/TrynaHustle
-  enabled: true
-  max_open_positions_from_account: 2
