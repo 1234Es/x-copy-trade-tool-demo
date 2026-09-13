@@ -69,7 +69,33 @@ def _x_polling_loop(context) -> None:  # noqa: ANN001
                     "x_api_credits_restored", "X API polling has resumed successfully.", {"username": username}
                 )
             for post in posts:
-                context.execution_engine.process_post(post)
+                # One bad POST must not kill the loop either -- only the
+                # fetch above used to be guarded, so any error out of
+                # process_post (an OpenAI edge case, a dropped Postgres
+                # connection, an unexpected shape in extraction) propagated
+                # out of `while True` and silently killed this daemon
+                # thread. The HTTP server and reconciliation loop run in
+                # other threads, so the app went on looking perfectly
+                # healthy while ingestion was dead: that is exactly what
+                # happened on 2026-09-11, costing two days of signals with
+                # the dashboard still reporting x_api "connected".
+                try:
+                    context.execution_engine.process_post(post)
+                except Exception as exc:  # noqa: BLE001
+                    log.error("post_processing_failed", post_id=post.post_id, author=post.author, error=str(exc))
+                    context.alert_sink.send(
+                        "post_processing_failed",
+                        f"Skipped post {post.post_id} from @{post.author} after an error: {exc}",
+                        {"post_id": post.post_id},
+                    )
+                # Advance the cursor even when processing failed, and
+                # deliberately so: process_post inserts the raw post before
+                # doing anything else, so a retry returns "duplicate_post"
+                # and does nothing useful. Holding the cursor back would
+                # therefore stall every later post behind one that can never
+                # succeed. The cost is that a post lost to a transient error
+                # is not retried -- far cheaper than a stalled pipeline, and
+                # now loudly logged and alerted rather than silent.
                 context.repository.set_last_processed_post_id(cursor_key, post.post_id, datetime.now(timezone.utc))
         time.sleep(X_POLL_INTERVAL_SECONDS)
 

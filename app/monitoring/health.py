@@ -6,7 +6,13 @@ dashboard from reporting that OANDA is fine.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
+
+# X polling runs once a minute (main.py's X_POLL_INTERVAL_SECONDS), so a last
+# success older than this means polling has stopped rather than merely being
+# between cycles -- a dead poll thread, a hung request, or an account that
+# stopped being served.
+STALE_POLL_AFTER_SECONDS = 300
 
 from app.broker.base_broker import BaseBroker
 from app.monitoring.logging import get_logger
@@ -57,17 +63,40 @@ def check_openai(api_key: str) -> ConnectionStatus:
     return ConnectionStatus("openai", True, "API key configured (connectivity confirmed on first successful call)")
 
 
-def check_x_api(bearer_token: str, poll_state: XPollState | None = None) -> ConnectionStatus:
+def check_x_api(
+    bearer_token: str, poll_state: XPollState | None = None, now: datetime | None = None
+) -> ConnectionStatus:
     if not bearer_token:
         return ConnectionStatus(
             "x_api", False, "not configured -- using manual/webhook input adapter by default (this is expected, not an error)"
         )
-    if poll_state is not None:
-        if poll_state.credits_depleted:
-            return ConnectionStatus(
-                "x_api", False,
-                "X API credits depleted (HTTP 402) -- polling has stopped until the account is topped up at developer.x.com",
-            )
-        if poll_state.last_error and poll_state.last_success_at is None:
-            return ConnectionStatus("x_api", False, f"bearer token configured, but polling is failing: {poll_state.last_error}")
-    return ConnectionStatus("x_api", True, "bearer token configured")
+    if poll_state is None:
+        return ConnectionStatus("x_api", True, "bearer token configured")
+
+    if poll_state.credits_depleted:
+        return ConnectionStatus(
+            "x_api", False,
+            "X API credits depleted (HTTP 402) -- polling has stopped until the account is topped up at developer.x.com",
+        )
+
+    def _with_error(detail: str) -> str:
+        return f"{detail} (last error: {poll_state.last_error})" if poll_state.last_error else detail
+
+    if poll_state.last_success_at is None:
+        return ConnectionStatus("x_api", False, _with_error("bearer token configured, but no poll has ever succeeded"))
+
+    # Staleness is the check that matters, and the one this was missing: the
+    # previous version only reported trouble when NO poll had ever succeeded,
+    # so once polling had worked even once, a silently dead poll thread kept
+    # reporting "connected" indefinitely -- which is how ingestion being dead
+    # from 2026-09-11 to 2026-09-13 went unnoticed on the dashboard.
+    age_seconds = (now or datetime.now(timezone.utc)) - poll_state.last_success_at
+    age = age_seconds.total_seconds()
+    if age > STALE_POLL_AFTER_SECONDS:
+        return ConnectionStatus(
+            "x_api", False,
+            _with_error(f"no successful poll for {int(age // 60)} min -- ingestion appears to have stopped"),
+        )
+    if poll_state.last_error:
+        return ConnectionStatus("x_api", True, f"polling, but the last attempt errored: {poll_state.last_error}")
+    return ConnectionStatus("x_api", True, f"polling normally (last success {int(age)}s ago)")
