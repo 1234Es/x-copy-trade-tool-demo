@@ -127,6 +127,7 @@ def create_app(context: AppContext) -> FastAPI:
         return JSONResponse(
             {
                 "app_mode": context.settings.app_mode,
+                "warnings": _operational_warnings(context),
                 "connections": [_status_dict(s) for s in (oanda_status, openai_status, x_status)],
                 "circuit_breaker": {
                     "tripped": context.circuit_breaker.is_tripped(now),
@@ -388,6 +389,31 @@ def create_app(context: AppContext) -> FastAPI:
 
 def _status_dict(status: Any) -> dict[str, Any]:
     return {"name": status.name, "connected": status.connected, "detail": status.detail}
+
+
+AUTO_APPROVE_OFF_WARNING = (
+    "Auto-approve is OFF -- trades will not open automatically. Most signals need review, so they "
+    "become proposals that expire after 5 minutes unless approved by hand. Turn it on under "
+    "Submit & Settings."
+)
+
+
+def _operational_warnings(context: AppContext) -> list[str]:
+    """States that are valid but quietly stop the system doing its job.
+
+    Auto-approve is the one that has actually bitten: it is in-memory and
+    resets to off on every restart unless AUTO_APPROVE_PROPOSALS is set, and
+    the model marks almost every signal from this source as needing review
+    (it never states a stop), so with it off practice_auto opens almost
+    nothing. The redeploys on 2026-09-13 turned it off, and approved signals
+    then expired as unanswered proposals until 2026-09-22 with nothing on the
+    dashboard to say why. Only warns in practice_auto: in approval mode a
+    click per trade is the point, and observe never trades at all.
+    """
+    warnings = []
+    if context.settings.app_mode == "practice_auto" and not context.approval_workflow.auto_approve:
+        warnings.append(AUTO_APPROVE_OFF_WARNING)
+    return warnings
 
 
 def _jsonable(value: Any) -> Any:

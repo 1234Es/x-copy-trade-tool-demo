@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 import requests
 import uvicorn
 
-from app.api.server import create_app
+from app.api.server import AUTO_APPROVE_OFF_WARNING, create_app
 from app.context import build_context
 from app.monitoring.logging import get_logger
 from app.sources.x_api_source import XApiCreditsDepletedError, XApiSource
@@ -145,6 +145,12 @@ def _self_ping_loop(public_url: str) -> None:
 def main() -> None:
     context = build_context()
     log.info("app_starting", mode=context.settings.app_mode, oanda_environment=context.settings.oanda_environment)
+    if context.settings.app_mode == "practice_auto" and not context.approval_workflow.auto_approve:
+        # Every restart lands here unless AUTO_APPROVE_PROPOSALS is set, since
+        # the dashboard toggle is in-memory -- flag it in the logs too, so a
+        # deploy that silently disabled auto-trading is visible there as well
+        # as on the dashboard.
+        log.warning("auto_approve_off_at_startup", detail=AUTO_APPROVE_OFF_WARNING)
 
     if context.settings.x_bearer_token:
         thread = threading.Thread(target=_x_polling_loop, args=(context,), daemon=True)

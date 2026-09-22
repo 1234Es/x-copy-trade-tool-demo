@@ -633,6 +633,11 @@ async function refreshStatus() {
   for (const cd of status.instrument_cooldowns) {
     html += pill(false, `${cd.instrument} cooldown: ${minutesLeft(cd.ends_at)}m left`, true);
   }
+  // Server-computed, so the rule for what's worth warning about lives in
+  // one place (server.py _operational_warnings) -- this only renders it.
+  for (const w of (status.warnings || [])) {
+    html += pill(false, w, true);
+  }
   html += '<span class="spacer"></span>';
   html += pnl.error
     ? `<span class="muted">account: ${escapeHtml(pnl.error)}</span>`
@@ -892,6 +897,9 @@ async function toggleAutoApprove(enabled) {
   await getJson('/api/settings/auto-approve', {
     method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({enabled})
   });
+  // Clear or raise the "auto-approve is OFF" warning straight away rather
+  // than leaving it stale for up to one 5-second refresh cycle.
+  refreshStatus();
 }
 
 async function submitManual() {
