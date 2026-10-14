@@ -481,11 +481,14 @@
         <li>Operator-only manual <strong>Close</strong> button on every open trade</li>
         <li>Broker reconciliation that halts trading when local records and OANDA disagree, picks up positions from limit orders that fill later, and a script to adopt orphaned positions</li>
         <li>Health monitoring on the dashboard: stalled ingestion, exhausted X API credits, and a warning whenever auto-approve is off</li>
+        <li>Copy-accuracy ledger: for each trade, the source's reported entry, exit, and pips against ours &mdash; slippage, delay, and how often our stop fired on a trade he closed in profit</li>
+        <li>A report of why signals didn't become trades, grouped by reason with example posts, including signals that passed every check but never reached the broker</li>
+        <li>A replay test that re-runs stored posts through the current prompts and lists every decision a prompt change would flip, before it's deployed</li>
         <li>Three approval modes (observe / approval / practice_auto) and a live auto-approve toggle</li>
         <li>OANDA v20 <strong>practice-only</strong> broker integration &mdash; hard-refuses to construct against the live endpoint</li>
         <li>Full dashboard: Posts, Proposals, Trades, Metrics, Accounts, Submit &amp; Settings</li>
         <li>Database-backed audit trail of every post, classification, signal, proposal, order, and trade (PostgreSQL in production, SQLite locally)</li>
-        <li>193 passing unit/integration tests, OpenAI and OANDA both mocked</li>
+        <li>247 passing unit/integration tests, OpenAI and OANDA both mocked</li>
         <li>Operator-gated public hosting &mdash; this page</li>
       </ul>
     </div>

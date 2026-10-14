@@ -95,11 +95,31 @@ Then open http://127.0.0.1:8000 in a browser.
 ```bash
 pytest
 ```
-179 unit/integration tests with OpenAI and OANDA both mocked — no real
+247 unit/integration tests with OpenAI and OANDA both mocked — no real
 network calls happen during the test suite, and no order is ever submitted
 during tests. Run them before changing anything in `app/risk/` or
 `app/execution/`; most of the suite exists because of a real failure
 (see the git log), not for coverage's sake.
+
+### 2.6 Before changing a prompt: replay
+
+The unit tests mock OpenAI, so they can't tell you whether a change to
+`app/nlp/prompts.py` makes the model read real posts differently. The
+replay can: it re-sends stored posts through the current classifier and
+extractor and lists every decision that would now come out differently.
+
+```bash
+python -m scripts.replay_prompts                      # how many calls it would make; sends nothing
+python -m scripts.replay_prompts --since 2026-09-01   # narrow it down first
+python -m scripts.replay_prompts --run                # replay (paid) and write a report
+```
+
+Run it once on the current prompt, then again after your change, and
+compare the two reports. It replays the language stages only — validation
+and risk depend on live market state at the time and can't be re-run.
+Replay sets live in `data/replay/` (gitignored: they're third-party posts);
+`--from-url https://<host>/api/posts?limit=500` builds a fresh one from a
+running deployment.
 
 ## 3. Obtaining and configuring permitted API credentials
 
