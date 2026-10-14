@@ -463,16 +463,21 @@
     <div class="card">
       <ul style="margin:0; padding-left:1.2em; line-height:1.7">
         <li>Manual/JSON, webhook, and full X API v2 input adapters, plus a companion browser extension for one-click capture from x.com</li>
-        <li>Rule-based pre-filter + OpenAI structured-output post classification</li>
-        <li>Structured signal extraction with hard-coded (not just prompted) safeguards &mdash; every evidence fragment must appear verbatim in the source post</li>
+        <li>Rule-based pre-filter + OpenAI structured-output post classification, given the author's recent posts and glossary as context</li>
+        <li>Structured signal extraction with hard-coded (not just prompted) safeguards &mdash; every evidence fragment must appear verbatim in the source post, and an instrument the post doesn't itself state always goes to human review</li>
         <li>A context engine that only pulls in prior posts with an explicit, labelled reason</li>
         <li>Deterministic signal validation (staleness, instrument mapping, SL/TP logic, market hours, conflicting positions) independent of the risk manager's numeric thresholds</li>
-        <li>Risk manager + circuit breaker (daily/weekly loss limits, API-error trips) and a manual kill switch</li>
+        <li>Fallback risk model: when a post gives no stop or target, a protective stop and a 1.5R target are computed and attached to the order at fill</li>
+        <li>Risk manager + circuit breaker &mdash; daily/weekly loss limits, consecutive losses (with a cooldown that lifts on its own), API-error and order-rejection rates, and reconciliation mismatches &mdash; plus a manual kill switch</li>
+        <li>Signal-driven position management: close, stop-move, and target-move posts act on the open trade they refer to (partial closes go to a proposal for manual sizing)</li>
+        <li>Operator-only manual <strong>Close</strong> button on every open trade</li>
+        <li>Broker reconciliation that halts trading when local records and OANDA disagree, picks up positions from limit orders that fill later, and a script to adopt orphaned positions</li>
+        <li>Health monitoring on the dashboard: stalled ingestion, exhausted X API credits, and a warning whenever auto-approve is off</li>
         <li>Three approval modes (observe / approval / practice_auto) and a live auto-approve toggle</li>
         <li>OANDA v20 <strong>practice-only</strong> broker integration &mdash; hard-refuses to construct against the live endpoint</li>
         <li>Full dashboard: Posts, Proposals, Trades, Metrics, Accounts, Submit &amp; Settings</li>
-        <li>SQLite audit trail of every post, classification, signal, proposal, order, and trade</li>
-        <li>139 passing unit/integration tests, OpenAI and OANDA both mocked</li>
+        <li>Database-backed audit trail of every post, classification, signal, proposal, order, and trade (PostgreSQL in production, SQLite locally)</li>
+        <li>193 passing unit/integration tests, OpenAI and OANDA both mocked</li>
         <li>Operator-gated public hosting &mdash; this page</li>
       </ul>
     </div>
@@ -480,9 +485,11 @@
     <h2 class="section-heading">Next</h2>
     <div class="card">
       <ul style="margin:0; padding-left:1.2em; line-height:1.7">
-        <li>Move the datastore off this host's ephemeral free-tier filesystem onto a durable external database, so history survives redeploys</li>
-        <li>Image/vision analysis for posts whose meaning depends entirely on an attached chart, currently forced to human review instead</li>
-        <li>Non-English post support (currently routed to <code>too_ambiguous</code> rather than guessed at)</li>
+        <li>Email/push notifications when ingestion stops, the circuit breaker trips, or a proposal is waiting for approval &mdash; today these only show on the dashboard</li>
+        <li>Database hosting that doesn't expire (the current free tier is deleted every 30 days)</li>
+        <li>Keep the kill switch on across restarts &mdash; it currently resets whenever the app redeploys</li>
+        <li>Store tracked accounts in the database, so changes made on the Accounts tab survive a redeploy</li>
+        <li>Better extraction of posts that restate the trader's running average price, which are still sometimes dropped</li>
         <li>Broader instrument-alias coverage as real usage surfaces gaps</li>
       </ul>
     </div>
@@ -490,9 +497,13 @@
     <h2 class="section-heading">Future</h2>
     <div class="card">
       <ul style="margin:0; padding-left:1.2em; line-height:1.7">
+        <li>Count several positions stopped out by the same price move as one loss toward the consecutive-loss halt</li>
+        <li>Partial-close sizing: read how much to close from the post, so partial closes can execute automatically</li>
+        <li>Calibrate the fallback stop and target distances against realised results</li>
+        <li>Image/vision analysis for posts whose meaning depends entirely on an attached chart, currently forced to human review instead</li>
+        <li>Non-English post support (currently routed to <code>too_ambiguous</code> rather than guessed at)</li>
         <li>Support for additional practice/paper brokers beyond OANDA</li>
         <li>Backtesting and richer analytics against historical proposals</li>
-        <li>Notification channels (email/push) for pending approvals</li>
       </ul>
       <div class="muted" style="margin-top:10px">
         Deliberately not on this list: real-money live trading. This project's design treats that
