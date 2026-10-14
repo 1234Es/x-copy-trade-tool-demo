@@ -30,74 +30,90 @@ def _x_polling_loop(context) -> None:  # noqa: ANN001
     x_source = XApiSource(bearer_token=context.settings.x_bearer_token, base_url=context.settings.x_api_base_url)
     log.info("x_api_polling_started", accounts=[a["username"] for a in context.tracked_accounts if a.get("enabled")])
     while True:
-        for account in context.tracked_accounts:
-            if not account.get("enabled"):
-                continue
-            username = account["username"]
-            cursor_key = f"x_api:{username}"
-            since_id = context.repository.get_last_processed_post_id(cursor_key)
-            try:
-                posts = x_source.fetch_new_posts_for_username(username, since_id)
-            except XApiCreditsDepletedError as exc:
-                log.error("x_api_poll_failed", username=username, error=str(exc))
-                context.risk_manager.record_api_error(datetime.now(timezone.utc))
-                context.x_poll_state.last_error = str(exc)
-                # Alert once on the OK -> depleted transition, not every poll
-                # cycle (X_POLL_INTERVAL_SECONDS=60 would otherwise spam an
-                # alert every minute for as long as the account stays unpaid).
-                if not context.x_poll_state.credits_depleted:
-                    context.x_poll_state.credits_depleted = True
-                    context.alert_sink.send(
-                        "x_api_credits_depleted",
-                        "X API credits depleted (HTTP 402) -- post polling has stopped for every tracked account "
-                        "until the account is topped up at developer.x.com. No new trade signals will arrive until "
-                        "then.",
-                        {"username": username},
-                    )
-                continue
-            except Exception as exc:  # noqa: BLE001 -- one bad poll must not kill the loop
-                log.error("x_api_poll_failed", username=username, error=str(exc))
-                context.risk_manager.record_api_error(datetime.now(timezone.utc))
-                context.x_poll_state.last_error = str(exc)
-                continue
-
-            context.x_poll_state.last_success_at = datetime.now(timezone.utc)
-            context.x_poll_state.last_error = None
-            if context.x_poll_state.credits_depleted:
-                context.x_poll_state.credits_depleted = False
-                context.alert_sink.send(
-                    "x_api_credits_restored", "X API polling has resumed successfully.", {"username": username}
-                )
-            for post in posts:
-                # One bad POST must not kill the loop either -- only the
-                # fetch above used to be guarded, so any error out of
-                # process_post (an OpenAI edge case, a dropped Postgres
-                # connection, an unexpected shape in extraction) propagated
-                # out of `while True` and silently killed this daemon
-                # thread. The HTTP server and reconciliation loop run in
-                # other threads, so the app went on looking perfectly
-                # healthy while ingestion was dead: that is exactly what
-                # happened on 2026-09-11, costing two days of signals with
-                # the dashboard still reporting x_api "connected".
-                try:
-                    context.execution_engine.process_post(post)
-                except Exception as exc:  # noqa: BLE001
-                    log.error("post_processing_failed", post_id=post.post_id, author=post.author, error=str(exc))
-                    context.alert_sink.send(
-                        "post_processing_failed",
-                        f"Skipped post {post.post_id} from @{post.author} after an error: {exc}",
-                        {"post_id": post.post_id},
-                    )
-                # Advance the cursor even when processing failed, and
-                # deliberately so: process_post inserts the raw post before
-                # doing anything else, so a retry returns "duplicate_post"
-                # and does nothing useful. Holding the cursor back would
-                # therefore stall every later post behind one that can never
-                # succeed. The cost is that a post lost to a transient error
-                # is not retried -- far cheaper than a stalled pipeline, and
-                # now loudly logged and alerted rather than silent.
-                context.repository.set_last_processed_post_id(cursor_key, post.post_id, datetime.now(timezone.utc))
+        # Backstop for the whole cycle. This runs as a daemon thread with
+        # nothing above it to restart it, so ANY exception that escapes kills
+        # ingestion for the life of the process -- while the HTTP server and
+        # reconciliation loop, in other threads, carry on looking healthy.
+        # That happened for real when the free Postgres instance expired on
+        # ~2026-09-25: the cursor read below was outside every guard, the
+        # first database error killed this thread, and ingestion stayed dead
+        # for three weeks without recovering. Guarding individual calls had
+        # already proved whack-a-mole (the cursor write was exposed the same
+        # way), so a failed cycle is now only ever a failed cycle: logged,
+        # recorded for the health check, retried after the usual interval.
+        try:
+            _x_poll_cycle(context, x_source)
+        except Exception as exc:  # noqa: BLE001
+            log.error("x_poll_cycle_failed", error=str(exc))
+            context.x_poll_state.last_error = str(exc)
+            context.risk_manager.record_api_error(datetime.now(timezone.utc))
         time.sleep(X_POLL_INTERVAL_SECONDS)
+
+
+def _x_poll_cycle(context, x_source) -> None:  # noqa: ANN001
+    """One pass over every enabled tracked account. May raise -- the caller
+    (_x_polling_loop) is responsible for keeping the thread alive."""
+    for account in context.tracked_accounts:
+        if not account.get("enabled"):
+            continue
+        username = account["username"]
+        cursor_key = f"x_api:{username}"
+        try:
+            since_id = context.repository.get_last_processed_post_id(cursor_key)
+            posts = x_source.fetch_new_posts_for_username(username, since_id)
+        except XApiCreditsDepletedError as exc:
+            log.error("x_api_poll_failed", username=username, error=str(exc))
+            context.risk_manager.record_api_error(datetime.now(timezone.utc))
+            context.x_poll_state.last_error = str(exc)
+            # Alert once on the OK -> depleted transition, not every poll
+            # cycle (X_POLL_INTERVAL_SECONDS=60 would otherwise spam an
+            # alert every minute for as long as the account stays unpaid).
+            if not context.x_poll_state.credits_depleted:
+                context.x_poll_state.credits_depleted = True
+                context.alert_sink.send(
+                    "x_api_credits_depleted",
+                    "X API credits depleted (HTTP 402) -- post polling has stopped for every tracked account "
+                    "until the account is topped up at developer.x.com. No new trade signals will arrive until "
+                    "then.",
+                    {"username": username},
+                )
+            continue
+        except Exception as exc:  # noqa: BLE001 -- one bad account's poll must not skip the others
+            log.error("x_api_poll_failed", username=username, error=str(exc))
+            context.risk_manager.record_api_error(datetime.now(timezone.utc))
+            context.x_poll_state.last_error = str(exc)
+            continue
+
+        context.x_poll_state.last_success_at = datetime.now(timezone.utc)
+        context.x_poll_state.last_error = None
+        if context.x_poll_state.credits_depleted:
+            context.x_poll_state.credits_depleted = False
+            context.alert_sink.send(
+                "x_api_credits_restored", "X API polling has resumed successfully.", {"username": username}
+            )
+        for post in posts:
+            # One bad post must not abandon the rest of the batch: catch it
+            # here so the posts after it are still processed in this cycle.
+            # (The backstop in _x_polling_loop keeps the thread alive either
+            # way, but would drop the remainder of the batch until next cycle.)
+            try:
+                context.execution_engine.process_post(post)
+            except Exception as exc:  # noqa: BLE001
+                log.error("post_processing_failed", post_id=post.post_id, author=post.author, error=str(exc))
+                context.alert_sink.send(
+                    "post_processing_failed",
+                    f"Skipped post {post.post_id} from @{post.author} after an error: {exc}",
+                    {"post_id": post.post_id},
+                )
+            # Advance the cursor even when processing failed, and
+            # deliberately so: process_post inserts the raw post before
+            # doing anything else, so a retry returns "duplicate_post"
+            # and does nothing useful. Holding the cursor back would
+            # therefore stall every later post behind one that can never
+            # succeed. The cost is that a post lost to a transient error
+            # is not retried -- far cheaper than a stalled pipeline, and
+            # now loudly logged and alerted rather than silent.
+            context.repository.set_last_processed_post_id(cursor_key, post.post_id, datetime.now(timezone.utc))
 
 
 def _reconciliation_loop(context) -> None:  # noqa: ANN001

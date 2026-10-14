@@ -96,6 +96,36 @@ def test_one_bad_post_does_not_stop_the_rest_of_the_batch(patched_loop):
     assert advanced == ["p1", "p2", "p3"]
 
 
+def test_loop_survives_the_database_failing_on_the_cursor_read(patched_loop):
+    # Regression: this read sat outside every guard. When the free Postgres
+    # instance expired on ~2026-09-25 the first failure here killed the
+    # thread, and ingestion stayed dead for three weeks without recovering.
+    context = patched_loop([_post()])
+    context.repository.get_last_processed_post_id.side_effect = RuntimeError("database does not exist")
+
+    with pytest.raises(_StopLoop):
+        main._x_polling_loop(context)
+
+    assert "database does not exist" in context.x_poll_state.last_error
+    context.risk_manager.record_api_error.assert_called_once()
+    # Nothing was fetched, so nothing can have been processed.
+    context.execution_engine.process_post.assert_not_called()
+
+
+def test_loop_survives_the_database_failing_on_the_cursor_write(patched_loop):
+    # The cursor write was exposed the same way as the read. The cycle-level
+    # backstop catches it, so this guards the backstop itself rather than
+    # one more individually-wrapped call.
+    context = patched_loop([_post()])
+    context.repository.set_last_processed_post_id.side_effect = RuntimeError("connection reset")
+
+    with pytest.raises(_StopLoop):
+        main._x_polling_loop(context)
+
+    assert "connection reset" in context.x_poll_state.last_error
+    context.risk_manager.record_api_error.assert_called_once()
+
+
 def test_successful_cycle_records_poll_health(patched_loop):
     context = patched_loop([_post()])
     context.execution_engine.process_post.side_effect = None
