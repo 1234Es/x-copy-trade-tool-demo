@@ -11,7 +11,7 @@ import json
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import Engine, Table, select, update
+from sqlalchemy import Engine, Table, exists, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
@@ -183,6 +183,47 @@ class Repository:
                 select(signals).where(signals.c.post_id == post_id).order_by(signals.c.created_at.desc())
             ).mappings().first()
             return _row_to_dict(row) if row else None
+
+    def get_signal_outcomes(self, since: datetime | None = None) -> list[dict[str, Any]]:
+        """Every signal alongside its source post and whether any order was
+        ever placed for it, newest first. Backs the rejection report.
+
+        `has_order` matters as much as the rejection reason: a signal can
+        pass every check (validation_status "approved") and still never
+        reach the broker -- when auto-approve is off it becomes a proposal
+        that quietly expires. Its validation_status says nothing about that,
+        so only the absence of an order row reveals it."""
+        has_order = exists().where(orders.c.signal_id == signals.c.signal_id).label("has_order")
+        stmt = (
+            select(
+                signals.c.signal_id, signals.c.signal_type, signals.c.validation_status,
+                signals.c.rejection_reason, signals.c.created_at,
+                raw_posts.c.post_id, raw_posts.c.author, raw_posts.c.text, raw_posts.c.posted_at,
+                has_order,
+            )
+            .join(raw_posts, raw_posts.c.post_id == signals.c.post_id)
+            .order_by(signals.c.created_at.desc())
+        )
+        if since is not None:
+            stmt = stmt.where(signals.c.created_at >= since)
+        with self.engine.connect() as conn:
+            return [_row_to_dict(r) for r in conn.execute(stmt).mappings().all()]
+
+    def get_posts_with_category(self, category: str, since: datetime | None = None) -> list[dict[str, Any]]:
+        """Posts the classifier placed in `category`, newest first -- used to
+        surface `too_ambiguous` posts, which never become signals at all and
+        so never appear among the rejections."""
+        stmt = (
+            select(raw_posts.c.post_id, raw_posts.c.author, raw_posts.c.text, raw_posts.c.posted_at,
+                   classifications.c.classified_at)
+            .join(classifications, classifications.c.post_id == raw_posts.c.post_id)
+            .where(classifications.c.category == category)
+            .order_by(classifications.c.classified_at.desc())
+        )
+        if since is not None:
+            stmt = stmt.where(classifications.c.classified_at >= since)
+        with self.engine.connect() as conn:
+            return [_row_to_dict(r) for r in conn.execute(stmt).mappings().all()]
 
     def has_signal_for_post(self, post_id: str) -> bool:
         with self.engine.connect() as conn:

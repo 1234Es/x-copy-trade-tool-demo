@@ -401,6 +401,8 @@
       <button class="period-btn" data-period="all">All Time</button>
     </div>
     <div id="metrics-card"></div>
+    <h2 class="section-heading">Why signals didn't become trades</h2>
+    <div id="rejections-card"></div>
   </div>
 
   <div role="tabpanel" id="panel-accounts" aria-labelledby="tab-accounts" hidden>
@@ -830,12 +832,43 @@ async function refreshMetrics() {
   </div>`;
 }
 
+// Deliberately NOT part of the 5-second refreshAll() cycle: re-rendering
+// would snap every expanded "Examples" list shut mid-read. The report
+// changes slowly, so it refreshes on load and whenever the period changes.
+async function refreshRejections() {
+  const el = document.getElementById('rejections-card');
+  const r = await getJson(`/api/reports/rejections?period=${currentMetricsPeriod}`);
+  if (r.detail) { el.innerHTML = `<div class="empty-state">${escapeHtml(r.detail)}</div>`; return; }
+  const summary = `<div class="muted" style="margin-bottom:var(--space-3)">
+    ${r.total_signals} signal(s) this period &middot; ${r.executed} became trades &middot;
+    ${r.handled_management} close/adjust handled</div>`;
+  if (!r.buckets.length) {
+    el.innerHTML = summary + '<div class="empty-state">Nothing was rejected this period.</div>';
+    return;
+  }
+  el.innerHTML = summary + r.buckets.map(b => `
+    <div class="card">
+      <div class="card-row">
+        <span class="card-title">${b.needs_attention ? '<span class="badge loss">CHECK</span> ' : ''}${escapeHtml(b.label)}</span>
+        <span class="muted">${b.count}</span>
+      </div>
+      ${b.hint ? `<div class="muted" style="margin-top:4px">${escapeHtml(b.hint)}</div>` : ''}
+      <details style="margin-top:8px">
+        <summary class="muted">Examples</summary>
+        ${b.examples.map(e => `<div class="evidence">
+          ${escapeHtml(formatTimestamp(e.posted_at))} &middot; @${escapeHtml(e.author)} &middot; <code>${escapeHtml(e.detail)}</code><br>
+          ${escapeHtml(decodeXTextEntities(e.text))}</div>`).join('')}
+      </details>
+    </div>`).join('');
+}
+
 function setMetricsPeriod(period) {
   currentMetricsPeriod = period;
   document.querySelectorAll('.period-btn').forEach(btn => {
     btn.setAttribute('aria-pressed', String(btn.dataset.period === period));
   });
   refreshMetrics();
+  refreshRejections();
 }
 
 document.querySelectorAll('.period-btn').forEach(btn => {

@@ -8,3 +8,6 @@ data/*.sqlite3
 logs/
 .pytest_cache/
 .claude/
+
+# Local replay sets: third-party posts, never committed (scripts/replay_prompts.py)
+data/replay/

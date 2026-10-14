@@ -24,6 +24,7 @@ from app.config.settings import add_tracked_account, remove_tracked_account, set
 from app.context import AppContext
 from app.monitoring.health import check_oanda, check_openai, check_x_api
 from app.monitoring.metrics import calculate_metrics
+from app.monitoring.rejection_report import build_rejection_report
 from app.sources.webhook_source import WebhookAuthError
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
@@ -373,6 +374,33 @@ def create_app(context: AppContext) -> FastAPI:
                 "open_trades": m.open_trades,
             }
         )
+
+    @app.get("/api/reports/rejections")
+    def rejection_report(period: str = "week") -> JSONResponse:
+        try:
+            r = build_rejection_report(context.repository, period)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return JSONResponse(_jsonable({
+            "period": r.period,
+            "period_start": r.period_start,
+            "period_end": r.period_end,
+            "total_signals": r.total_signals,
+            "executed": r.executed,
+            "handled_management": r.handled_management,
+            "buckets": [
+                {
+                    "key": b.key, "label": b.label, "hint": b.hint, "needs_attention": b.needs_attention,
+                    "count": b.count,
+                    "examples": [
+                        {"post_id": e.post_id, "author": e.author, "text": e.text,
+                         "posted_at": e.posted_at, "detail": e.detail}
+                        for e in b.examples
+                    ],
+                }
+                for b in r.buckets
+            ],
+        }))
 
     @app.get("/api/pnl")
     def pnl() -> JSONResponse:
