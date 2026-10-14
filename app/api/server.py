@@ -6,6 +6,7 @@ FastAPI's request/response model much better than Streamlit's rerun model.
 """
 from __future__ import annotations
 
+import dataclasses
 import json
 import secrets
 import time
@@ -23,6 +24,7 @@ from app.auth import SESSION_COOKIE_NAME
 from app.config.settings import add_tracked_account, remove_tracked_account, set_tracked_account_enabled
 from app.context import AppContext
 from app.monitoring.health import check_oanda, check_openai, check_x_api
+from app.monitoring.copy_ledger import build_ledger, default_pip_size
 from app.monitoring.metrics import calculate_metrics
 from app.monitoring.rejection_report import build_rejection_report
 from app.sources.webhook_source import WebhookAuthError
@@ -400,6 +402,23 @@ def create_app(context: AppContext) -> FastAPI:
                 }
                 for b in r.buckets
             ],
+        }))
+
+    @app.get("/api/ledger")
+    def copy_ledger() -> JSONResponse:
+        def pip_size_for(instrument: str) -> float:
+            # The account's own pip location is the source of truth (gold's
+            # is account-specific); fall back only if the broker can't say.
+            try:
+                metadata = context.broker.get_instrument_metadata(instrument)
+            except Exception:  # noqa: BLE001 -- a broker blip mustn't break a read-only report
+                metadata = None
+            return metadata.pip_size if metadata else default_pip_size(instrument)
+
+        rows, summary = build_ledger(context.repository, pip_size_for)
+        return JSONResponse(_jsonable({
+            "summary": dataclasses.asdict(summary),
+            "rows": [dataclasses.asdict(r) for r in rows],
         }))
 
     @app.get("/api/pnl")

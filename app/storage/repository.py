@@ -361,6 +361,27 @@ class Repository:
             ).mappings().first()
             return _row_to_dict(row) if row else None
 
+    def get_trades_with_source_signals(self) -> list[dict[str, Any]]:
+        """Every trade, joined back to the signal and post that opened it --
+        what the source said (entry price, when he posted it) alongside what
+        we actually got. Backs the copy-accuracy ledger.
+
+        Outer joins throughout: an adopted trade's synthetic signal has no
+        real post behind it, and must still appear rather than vanish."""
+        with self.engine.connect() as conn:
+            rows = conn.execute(
+                select(
+                    trades, orders.c.units, signals.c.author,
+                    signals.c.entry_price.label("source_entry_price"),
+                    raw_posts.c.post_id.label("source_post_id"),
+                    raw_posts.c.posted_at.label("source_posted_at"),
+                )
+                .join(orders, trades.c.order_id == orders.c.order_id)
+                .outerjoin(signals, orders.c.signal_id == signals.c.signal_id)
+                .outerjoin(raw_posts, raw_posts.c.post_id == signals.c.post_id)
+            ).mappings().all()
+            return [_row_to_dict(r) for r in rows]
+
     def get_open_trades_for_instrument(self, instrument: str) -> list[dict[str, Any]]:
         with self.engine.connect() as conn:
             rows = conn.execute(

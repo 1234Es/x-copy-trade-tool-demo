@@ -391,6 +391,12 @@
 
   <div role="tabpanel" id="panel-trades" aria-labelledby="tab-trades" hidden>
     <div id="trades-card"></div>
+    <h2 class="section-heading">Copy accuracy vs the source</h2>
+    <div class="muted" style="margin-bottom:var(--space-3)">
+      What the source reported for each trade we copied, against what we actually got. Pips are
+      worked out from his stated prices, not the number he writes, which is sometimes a running total.
+    </div>
+    <div id="ledger-card"></div>
   </div>
 
   <div role="tabpanel" id="panel-metrics" aria-labelledby="tab-metrics" hidden>
@@ -832,6 +838,69 @@ async function refreshMetrics() {
   </div>`;
 }
 
+function signedPips(v) {
+  if (v === null || v === undefined) return '&mdash;';
+  return `${v > 0 ? '+' : ''}${v.toFixed(1)}`;
+}
+
+function delayText(seconds) {
+  if (seconds === null || seconds === undefined) return '&mdash;';
+  if (seconds < 120) return `${Math.round(seconds)}s`;
+  if (seconds < 7200) return `${Math.round(seconds / 60)}m`;
+  return `${(seconds / 3600).toFixed(1)}h`;
+}
+
+// Changes only when a trade opens or closes, so it runs on its own slow
+// timer rather than in the 5-second refreshAll() cycle.
+async function refreshLedger() {
+  const el = document.getElementById('ledger-card');
+  const data = await getJson('/api/ledger');
+  if (data.detail) { el.innerHTML = `<div class="empty-state">${escapeHtml(data.detail)}</div>`; return; }
+  const s = data.summary;
+  if (!s.trades) { el.innerHTML = '<div class="empty-state">No trades yet.</div>'; return; }
+  const gap = s.our_total_pips - s.source_total_pips;
+  const gapClass = gap < 0 ? 'negative' : (gap > 0 ? 'positive' : '');
+  const stats = `<div class="stat-grid">
+    <div class="stat-card">
+      <div class="stat-label">Us vs source (paired trades)</div>
+      <div class="stat-value ${gapClass}">${signedPips(gap)} pips</div>
+      <div class="stat-sub">we made ${signedPips(s.our_total_pips)}, he made ${signedPips(s.source_total_pips)} &middot; ${s.paired} of ${s.trades} trades paired</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Entry</div>
+      <div class="stat-value">${signedPips(s.avg_entry_slippage_pips)} pips</div>
+      <div class="stat-sub">average slippage (positive = worse than him) &middot; ${delayText(s.avg_entry_delay_seconds)} average delay</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Stopped out, he won</div>
+      <div class="stat-value ${s.stopped_out_while_source_profited ? 'negative' : ''}">${s.stopped_out_while_source_profited}</div>
+      <div class="stat-sub">our fallback stop fired on a trade he closed in profit</div>
+    </div>
+  </div>`;
+  const rows = data.rows.map(r => {
+    const gapCell = r.pips_gap === null ? '&mdash;'
+      : `<span class="badge ${r.pips_gap < 0 ? 'loss' : 'win'}">${signedPips(r.pips_gap)}</span>`;
+    const stated = (r.source_stated_pips !== null && r.source_pips !== null
+                    && Math.abs(Math.abs(r.source_stated_pips) - Math.abs(r.source_pips)) >= 1)
+      ? ` <span class="muted" title="He wrote ${r.source_stated_pips} pips">(said ${signedPips(r.source_stated_pips)})</span>` : '';
+    return `<tr>
+      <td>${escapeHtml(formatTimestamp(r.source_posted_at))}</td>
+      <td>${escapeHtml(r.instrument)} ${escapeHtml(r.direction)}</td>
+      <td class="num">${r.source_entry ?? '&mdash;'} &rarr; ${r.our_entry ?? '&mdash;'}</td>
+      <td class="num">${signedPips(r.entry_slippage_pips)}</td>
+      <td class="num">${delayText(r.entry_delay_seconds)}</td>
+      <td class="num">${signedPips(r.source_pips)}${stated}</td>
+      <td class="num">${signedPips(r.our_pips)}</td>
+      <td class="muted">${escapeHtml(r.status === 'open' ? 'open' : (r.our_exit_reason ?? ''))}</td>
+      <td>${gapCell}</td>
+    </tr>`;
+  }).join('');
+  el.innerHTML = `${stats}<div class="table-wrap"><table>
+    <thead><tr><th>His post</th><th>Trade</th><th>Entry (his &rarr; ours)</th><th>Slippage</th><th>Delay</th>
+    <th>His pips</th><th>Our pips</th><th>Our exit</th><th>Gap</th></tr></thead>
+    <tbody>${rows}</tbody></table></div>`;
+}
+
 // Deliberately NOT part of the 5-second refreshAll() cycle: re-rendering
 // would snap every expanded "Examples" list shut mid-read. The report
 // changes slowly, so it refreshes on load and whenever the period changes.
@@ -971,6 +1040,8 @@ function refreshAll() {
 refreshAll();
 refreshSettings();
 setInterval(refreshAll, 5000);
+refreshLedger();
+setInterval(refreshLedger, 60000);
 </script>
 </body>
 </html>
